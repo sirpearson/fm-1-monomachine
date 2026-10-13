@@ -5,7 +5,7 @@ monofoniche** ispirata all'**Elektron Monomachine**: ogni traccia ha la sua *mac
 lo stesso percorso di filtri/inviluppi/effetti, tre LFO e il suo delay; uno step sequencer da 64
 passi con **parameter lock**, trigless lock, slide, accent, swing, probabilità e arpeggiatore.
 
-![SYN](docs/img/syn.png) ![Lock](docs/img/lock.png) ![LFO](docs/img/lfo.png) ![Pattern](docs/img/home.png)
+![AMP](docs/img/syn.png) ![STEP REC](docs/img/steprec.png) ![Scala](docs/img/scale.png) ![Lock](docs/img/lock.png) ![LFO](docs/img/lfo.png) ![Pattern](docs/img/home.png)
 
 > **Stato: sperimentale, non ancora provato su hardware reale.** Il codice compila con il toolchain
 > JieLi e passa tutti i test nel simulatore host (audio, schermo, LED, MIDI, salvataggio). La
@@ -45,7 +45,7 @@ suonabile con mouse, tastiera del computer e tastiera MIDI. Vedi [L'emulatore](#
 | | |
 | --- | --- |
 | **Tracce** | 6, ognuna una voce monofonica |
-| **Macchine** | 11: SAW (supersaw), PULS (pulse/PWM), ENS (ensemble/accordi), SID (chip 6581), FM (3 operatori), FMDY (FM con inviluppo d'indice), WAVE (wavetable), DRUM (8 percussioni), NOIS (rumore), PLUK (corda pizzicata), SINE (sinusoide con wavefolder e pitch envelope) |
+| **Macchine** | 12: ACID (basso stile TB-303), SAW (supersaw), PULS (pulse/PWM), ENS (ensemble/accordi), SID (chip 6581), FM (3 operatori), FMDY (FM con inviluppo d'indice), WAVE (wavetable), DRUM (8 percussioni), NOIS (rumore), PLUK (corda pizzicata), SINE (sinusoide con wavefolder e pitch envelope) |
 | **Percorso per traccia** | macchina → filtro passa-alto + passa-basso (BASE / WIDTH, risonanze, inviluppo AD) → inviluppo d'ampiezza (ATK, HOLD, DEC, REL) → distorsione → EQ a campana → riduzione sample-rate → volume/pan → delay di traccia (sincronizzato al tempo, feedback filtrato) |
 | **Modulazione** | 3 LFO per traccia, 7 forme d'onda, 5 modi di trigger, velocità a tempo; ognuno può puntare **qualsiasi parametro di qualsiasi traccia** (anche gli altri LFO) |
 | **Sequencer** | fino a 64 step per pattern, note per step, accent, slide, 32 righe di parameter lock per pattern, trigless lock, swing 50–80 %, velocità 1/2x–2x, probabilità, arpeggiatore per traccia, sync MIDI clock in/out |
@@ -84,21 +84,24 @@ I LED: step con trig accesi, step con soli lock in luce tenue, lo step in esecuz
 neri: traccia selezionata accesa, tracce attive in luce tenue, tracce mute spente.
 
 **KEYS** (SEQ spento): tutti i 27 tasti suonano la traccia selezionata in cromatico (da F),
-OCT−/OCT+ cambiano ottava (±3). Con l'arpeggiatore attivo i tasti tenuti vengono arpeggiati.
+OCT−/OCT+ cambiano ottava (±3). Con l'arpeggiatore attivo i tasti tenuti vengono arpeggiati. I LED
+mostrano la scala del pattern (pagina HOME, seconda riga): tonica accesa, note della scala in luce
+tenue, note fuori scala spente; con **SNAP** un tasto fuori scala suona la nota della scala più vicina.
+Con **REC** da fermo si entra in **STEP REC** (vedi [Il sequencer](#il-sequencer)).
 
 ### Pulsanti ed encoder
 
 | Controllo | Effetto |
 | --- | --- |
 | **PLAY** | start / stop |
-| **REC** | registrazione: in KEYS mentre suona, le note finiscono sullo step più vicino; da fermo, *step entry* (ogni nota sul prossimo step); le manopole girate mentre suona registrano lock sugli step con trig |
+| **REC** | registrazione. In KEYS mentre suona: le note finiscono sullo step più vicino (un tasto premuto mentre un altro è ancora giù = slide). In KEYS da fermo: **STEP REC**. Mentre suona, le manopole girate registrano lock sugli step con trig |
 | **EDIT** | pagina SYN (parametri della macchina); di nuovo: valori 5–8 |
 | **ENV** | pagina AMP |
 | **SEL** | pagina FILT |
 | **FX** | pagina FX |
 | **LFO** | pagine LFO1 → LFO2 → LFO3 (ogni pressione: metà successiva) |
 | **ARP** | pagina TRK (arpeggiatore, gate, accent, probabilità, trasposizione) |
-| **HOME** | pagina PATTERN: tempo, swing, lunghezza, velocità + panoramica di tutte le tracce |
+| **HOME** | pagina PATTERN: tempo, swing, lunghezza, velocità + panoramica di tutte le tracce; di nuovo: ROOT, SCALE, SNAP (la scala del pattern) |
 | **GLO** | impostazioni globali (MIDI, clock, follow, tema, CPU) |
 | **SAVE** | tap: salva pattern + kit nello slot; tenuto + PRESETS: "salva come" in un altro slot (copia), al rilascio; tenuto a lungo: **CLEAR?** (SAVE di nuovo: cancella il pattern; REC: anche il kit) |
 | **SELECT** | traccia |
@@ -144,28 +147,91 @@ Per tutte le macchine il valore 1 è **TUNE** (semitoni, ±64); dove c'è, il 2 
 | **NOIS** (2 = COLR colore ±) | SH sample&hold legato alla nota | BITS | DENS densità (dust) | RING ring-mod | SINE sinusoide | RESO passa-banda risonante sulla nota |
 | **PLUK** corda | DCAY decadimento | TONE | PICK posizione del plettro | EXCT rumore → impulso | BRST lunghezza eccitazione | STIF rigidità |
 | **SINE** | FOLD wavefolder | DRIV saturazione | SUB | OCT2 ottava sopra | PDEC decadimento pitch | PAMT pitch envelope (cassa!) |
+| **ACID** basso 303 (2 = WAVE: SAW / SQR) | CUT taglio | RES risonanza | ENV quantità inviluppo | DEC decadimento inviluppo | ACC forza dell'accent | DRIV saturazione |
+
+**ACID** è pensata per le linee alla TB-303: oscillatore saw o square, filtro passa-basso a 4 poli
+risonante con il suo inviluppo (solo decadimento), e l'accent come sulla 303: nota più forte, inviluppo
+più breve e uno "sweep" del filtro che cresce se gli accent si susseguono. Lo slide è quello del
+sequencer: la nota scivola senza riattaccare né l'inviluppo né il filtro, e il gate della nota prima
+resta aperto. Su una traccia ACID tieni la pagina FILT aperta (BASE 0, WDTH 127): il filtro è quello
+della macchina.
 
 Le DRUM usano i propri inviluppi: scegliendole, l'AMP passa a HOLD 0 / DEC lungo (e torna indietro
 scegliendo un'altra macchina). La nota suonata traspone il suono rispetto al C4.
 
 ## Il sequencer
 
+### Tre modi di inserire le note
+
+**1. STEP REC: una nota per step, avanzando da solo** (il modo per bassi e melodie).
+
+1. Scegli la traccia (SELECT o, in GRID, un tasto nero 1–6).
+2. **SEQ** per passare in KEYS, poi **REC** a sequencer fermo: in basso compare il badge rosso
+   **STEP REC**, sullo step 1 lampeggia il cursore e lo schermo mostra il piano-roll della traccia.
+3. Ogni tasto scrive la sua nota sullo step del cursore e passa al successivo. I cinque pulsanti sopra
+   la tastiera cambiano funzione (le etichette sono sullo schermo, nello stesso ordine del pannello):
+
+| Pulsante | In STEP REC |
+| --- | --- |
+| **FX** | **REST**: step vuoto, e avanti |
+| **SEL** | **SLD**: la prossima nota scivola dalla precedente |
+| **ENV** | **ACC**: la prossima nota con accent |
+| **LFO** | **TIE**: ripete la nota precedente legata (si allunga di uno step) |
+| **EDIT** | **BACK**: torna indietro di uno step (la nota che scrivi lo sovrascrive) |
+| **ALGORITHM** | sposta il cursore avanti / indietro |
+| **legato** | un tasto premuto mentre il precedente è ancora giù scrive la nota con slide |
+
+4. **REC** di nuovo per uscire, **PLAY** per ascoltare. In GRID puoi poi ritoccare tutto step per step.
+
+Esempio, un basso acido di 16 step sulla traccia 4 (ACID) in C minore: C · REST · Eb con ACC ·
+TIE · SLD + G · F legato · REST · C ... I LED mostrano le note della scala; con SNAP attivo non
+puoi sbagliare nota.
+
+**2. GRID: step per step, a mano.** Tap su uno step per accenderlo (usa l'ultima nota suonata sulla
+traccia). Tieni lo step e gira **PRESETS** per la nota (dentro la scala del pattern, se ne hai scelta
+una) e **ALGORITHM** per l'ottava. **ACC** / **SLD** tenuti + step: accent / slide. Il piano-roll negli
+step in basso mostra l'altezza delle note.
+
+**3. REC dal vivo.** In KEYS, **PLAY** e **REC**: suona e le note finiscono sullo step più vicino (un
+tasto premuto mentre il precedente è ancora giù diventa uno slide). Funziona anche dal MIDI.
+
+### Scala e modo
+
+Pagina **HOME**, premi di nuovo HOME per la seconda riga: **ROOT** (C…B), **SCALE** (CHROM, MAJOR,
+MINOR, DORIAN, PHRYG, LYDIAN, MIXO, LOCRIAN, HARM MIN, MEL MIN, MAJ PENT, MIN PENT, BLUES, WHOLE,
+DIM 7), **SNAP** (ON/OFF). Sotto c'è un'ottava disegnata con la tonica e le note della scala. La scala è
+del pattern (salvata con lui) e serve a tre cose: i LED in KEYS, SNAP (i tasti fuori scala suonano la
+nota della scala più vicina; a pari distanza, quella sotto) e PRESETS sugli step tenuti (si muove per
+gradi della scala).
+
+### Il resto
+
 - **Lunghezza** 1–64 step, **velocità** 1/2x 3/4x 1x 3/2x 2x, **swing** 50–80 % (pagina HOME).
   Il tempo (30–300 BPM) è globale.
-- **Parameter lock**: ogni step può fissare qualsiasi valore di qualsiasi pagina della sua traccia;
-  32 righe per pattern (una riga = una coppia traccia/parametro con un valore per ogni step: un
-  parametro lockato su tutti i 64 step occupa una sola riga). Il lock vale dalla nota di quello step
-  fino al trig successivo della traccia.
+- **Parameter lock**: tieni uno step (GRID) e gira una manopola: quel valore vale solo per quello
+  step, fino al trig successivo della traccia. 32 righe per pattern (una riga = una coppia
+  traccia/parametro con un valore per ogni step). Lo step tenuto mostra i suoi valori lockati in bianco
+  con un rombo.
 - **Trigless lock**: un lock su uno step senza trig cambia il suono della nota che sta suonando
   (es. aprire il filtro a metà di una nota lunga).
-- **Slide**: la nota scivola dalla precedente senza riattaccare gli inviluppi (tempo = PORT, o 60 ms).
-- **Accent**: volume più alto secondo ACNT.
+- **Slide**: la nota scivola dalla precedente senza riattaccare gli inviluppi (tempo = PORT, o 60 ms);
+  la nota prima tiene il gate aperto fino a lei.
+- **Accent**: volume più alto secondo ACNT (sulla ACID anche filtro e sweep).
 - **PROB**: probabilità che il trig suoni (lockabile: probabilità diversa per step).
 - **Arpeggiatore** (pagina TRK): un trig suona l'accordo ACHD su ARNG ottave a velocità ASPD fino al
   trig successivo; in KEYS arpeggia i tasti tenuti.
 - **MIDI clock**: segue il clock in ingresso (start/stop/continue, 6 tick per step a 1x, swing
   incluso) e può mandarlo in uscita.
 - **Mute** per traccia (MUT), non salvati.
+
+### Cosa dicono i colori
+
+Ogni traccia ha la sua tinta (rosso, arancio, giallo, verde, azzurro, viola): la sua casella in alto, i
+suoi step, i suoi valori e i grafici delle pagine. Ogni pagina ha l'etichetta del suo colore e un
+piccolo grafico dal vivo: l'inviluppo (AMP), la curva del filtro (FILT), gli echi del delay (FX),
+l'oscilloscopio dell'LFO e le note dell'arpeggio (TRK). Il bianco è ciò che stai toccando, tenendo o
+che è lockato; il rosso è la registrazione. Le caselle delle tracce si accendono a ogni nota, lo step
+che suona lampeggia, la manopola appena girata illumina il suo valore.
 
 ## Pattern, kit e salvataggio
 

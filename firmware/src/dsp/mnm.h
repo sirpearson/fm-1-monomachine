@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* MNM-1: a six-track monophonic synthesizer and step sequencer, after the Elektron Monomachine.
  *
- *   TRACKS   MN_NT tracks, one mono voice each. A track is a MACHINE (the oscillator: eleven of them,
+ *   TRACKS   MN_NT tracks, one mono voice each. A track is a MACHINE (the oscillator: twelve of them,
  *            mn_machine_*), then the same strip on every track: a high-pass and a low-pass filter
  *            (Base / Width, each with its resonance, and an attack-decay envelope on both), an amp
  *            envelope (attack, hold, decay, release), distortion, a peak EQ, sample-rate reduction,
@@ -45,7 +45,7 @@ enum {
 enum { L_TRK, L_DEST, L_WAVE, L_TRIG, L_MULT, L_SPD, L_PHAS, L_DPTH };   /* an LFO's eight */
 #define MN_NMOD 56                      /* LFO destinations: every value but the TRK page's */
 
-enum { MC_SAW, MC_PULSE, MC_ENS, MC_SID, MC_FM, MC_FMDYN, MC_WAVE, MC_DRUM, MC_NOISE, MC_PLUCK, MC_SINE, MC_N };
+enum { MC_SAW, MC_PULSE, MC_ENS, MC_SID, MC_FM, MC_FMDYN, MC_WAVE, MC_DRUM, MC_NOISE, MC_PLUCK, MC_SINE, MC_ACID, MC_N };
 enum { LW_TRI, LW_SIN, LW_SQR, LW_SAW, LW_RAMP, LW_EXP, LW_RND, LW_N };
 enum { LT_FREE, LT_TRIG, LT_HOLD, LT_ONE, LT_HALF, LT_N };
 enum { ARP_OFF, ARP_UP, ARP_DOWN, ARP_UPDN, ARP_RAND, ARP_N };
@@ -82,9 +82,15 @@ typedef struct {
     uint8_t speed;                      /* 0..MN_NSPEED-1 */
     uint8_t swing;                      /* 50..80 (%) */
     uint8_t rsv;
+    /* format 2: the pattern's scale (the keys' lights, SNAP, a step's note moved in the scale) */
+    uint8_t root;                       /* 0..11: C .. B */
+    uint8_t scale;                      /* 0..MN_NSCALE-1 (0: chromatic) */
+    uint8_t snap;                       /* 1: a key out of the scale plays the nearest note in it */
+    uint8_t rsv2;
 } mn_pat_t;
 #define MN_SONG_MAGIC 0x314D4E4Du        /* "MNM1" */
-#define MN_SONG_FORMAT 1u
+#define MN_SONG_FORMAT 2u
+#define MN_SONG_SIZE_V1 (sizeof(mn_song_t) - 4u)   /* a format 1 song: the same, without the scale */
 typedef struct {
     uint32_t magic, format;
     mn_kit_t kit;
@@ -98,6 +104,15 @@ void mn_pat_clear(mn_pat_t *p);
 void mn_song_init(mn_song_t *s);                          /* the default kit, an empty pattern */
 void mn_song_demo(mn_song_t *s);                          /* the default kit and a beat to start from */
 int mn_song_valid(mn_song_t *s);                          /* magic and format; values out of range fixed: 1 */
+int mn_song_load_size(mn_song_t *s, int bytes);           /* a song of `bytes` read from flash: valid (1)? An older
+                                                             format gets the fields it lacks at their defaults */
+
+/* ---- scales */
+#define MN_NSCALE 15
+const char *mn_scale_name(int scale);                     /* "CHROM", "MAJOR", "DORIAN" ... */
+int mn_in_scale(int scale, int root, int note);
+int mn_scale_snap(int scale, int root, int note);         /* the nearest note in the scale (a tie: the lower) */
+int mn_scale_move(int scale, int root, int note, int steps);   /* steps up / down the scale from the note */
 /* locks: -1 when none */
 int mn_lock_get(const mn_pat_t *p, int t, int par, int step);
 int mn_lock_set(mn_pat_t *p, int t, int par, int step, int v);   /* 0, or -1: every row is in use */

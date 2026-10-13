@@ -8,11 +8,14 @@
  *              black keys: 1-6 the tracks; MUTE (tap: the track; held: + a track key), ACC + a step:
  *              accent, SLD + a step: slide, COPY (the track), PASTE (its steps; held: and its sound),
  *              COPY held + PASTE: clear the track
- *   KEYS       27 keys from F, OCT- / OCT+ the octave. With REC: playing, the notes go on the steps they
- *              fall on; stopped, one step after another (step entry)
+ *   KEYS       27 keys from F, OCT- / OCT+ the octave; the pattern's scale lights its keys (SNAP: a key out
+ *              of it plays the nearest note in it). With REC, playing: the notes go on the steps they fall on
+ *              (a key pressed while another is held: a slide). With REC, stopped: STEP REC, a note a step and
+ *              on to the next; FX rest, SEL slide, ENV accent (for the next note), LFO tie, EDIT back,
+ *              ALGORITHM moves the cursor
  *   PLAY       start / stop     REC  record: the keys and MIDI notes, and the knobs as locks on the trigs
  *   EDIT SYN  ENV AMP  SEL FILT  FX FX  LFO LFO1-3  ARP TRK   pressed again: the other four of the page
- *   HOME       the pattern: tempo, swing, length, speed, and every track's steps
+ *   HOME       the pattern: tempo, swing, length, speed; root, scale, snap; every track's steps
  *   GLO        MIDI, clock, the grid following, the colours
  *   SELECT     the track     ALGORITHM the machine (SYN page)     PRESETS the pattern (32 slots; playing:
  *              it changes at the end of this one)     KNOB 1-4 the four values of the page
@@ -65,6 +68,11 @@ static struct {
     uint8_t pdirty;                        /* the global settings changed */
     uint8_t trig_seen[MN_NT];
     uint8_t flash[MN_NT];
+    uint8_t arm;                           /* STEP REC: MN_ACC / MN_SLIDE for the next note */
+    int8_t pulse_step;                     /* the step that just played (its cell lights up) */
+    uint32_t pulse_t;
+    int8_t step_seen;
+    float meter[MN_NT];                    /* the strip's meters, falling */
 } ui;
 
 /* the clipboard: one track */
@@ -276,8 +284,18 @@ static void home_turn(int i, int32_t e)
 {
     mn_pat_t *p = pat();
     int d;
-    if (ui.row[V_HOME])
+    if (ui.row[V_HOME]) {                            /* the scale */
+        if (i == 0)
+            p->root = (uint8_t)((p->root + (int)e % 12 + 12) % 12);
+        else if (i == 1)
+            p->scale = (uint8_t)clampi(p->scale + (int)e, 0, MN_NSCALE - 1);
+        else if (i == 2)
+            p->snap = e > 0;
+        else
+            return;
+        mark_dirty();
         return;
+    }
     switch (i) {
     case 0:
         d = accel(EN_K1, e, 100);
@@ -416,11 +434,21 @@ static void note_out(int t, int on, int n, int vel)
 }
 
 static int pat_len(void) { return pat()->len ? pat()->len : 16; }
+static int step_rec(void) { return ui.keys_mode && ui.rec && !mn_playing; }
+static int scaled(int n) { return pat()->snap ? mn_scale_snap(pat()->scale, pat()->root, n) : n; }
+static int key_note_of(uint32_t k) { return clampi(scaled(key_base() + (int)k), 0, 127); }
 
-/* recording a note: playing, on the step it falls on (the nearer); stopped, at the cursor, which moves on */
-static void rec_note(int t, int n)
+/* recording a note: playing, on the step it falls on (the nearer); stopped (STEP REC), at the cursor, which
+ * moves on. legato (a key pressed while another is held): the step slides into the note */
+static void cursor_to(int s)
+{
+    ui.cursor = (uint8_t)((s % pat_len() + pat_len()) % pat_len());
+    ui.spage = (uint8_t)(ui.cursor / 16);
+}
+static void rec_note(int t, int n, int legato)
 {
     int s;
+    uint8_t f = MN_TRIG;
     if (!ui.rec)
         return;
     if (mn_playing) {
@@ -431,20 +459,63 @@ static void rec_note(int t, int n)
             s = (s + 1) % pat_len();
     } else {
         s = ui.cursor % pat_len();
-        ui.cursor = (uint8_t)((s + 1) % pat_len());
-        ui.spage = (uint8_t)(ui.cursor / 16);
+        f |= ui.arm;
+        ui.arm = 0;
+        cursor_to(s + 1);
     }
-    pat()->trig[t][s] = MN_TRIG;
+    if (legato)
+        f |= MN_SLIDE;
+    if (!mn_playing)
+        mn_lock_clear_step(pat(), t, s);            /* (STEP REC writes the step anew) */
+    pat()->trig[t][s] = f;
     pat()->note[t][s] = (uint8_t)n;
     mark_dirty();
 }
 
-static void play_note(int t, int n, int vel)
+static void play_note(int t, int n, int vel, int legato)
 {
     mn_note_on(t, n, vel);
     note_out(t, 1, n, vel);
     ui.last_note[t] = (uint8_t)n;
-    rec_note(t, n);
+    rec_note(t, n, legato);
+}
+
+/* STEP REC's buttons: a rest, a tie (the note before, held on), back; slide and accent for the next note */
+static void step_rec_button(int b)
+{
+    int t = ui.track, s = ui.cursor % pat_len(), prev = (s + pat_len() - 1) % pat_len();
+    char a[8];
+    switch (b) {
+    case B_FX:                                       /* REST */
+        pat()->trig[t][s] = 0;
+        mn_lock_clear_step(pat(), t, s);
+        cursor_to(s + 1);
+        mark_dirty();
+        itoa_u((uint32_t)s + 1u, a);
+        say("REST", a);
+        break;
+    case B_LFO:                                      /* TIE: the same note, sliding on from the one before */
+        if (!(pat()->trig[t][prev] & MN_TRIG)) {
+            say("TIE", "NO NOTE BEFORE");
+            break;
+        }
+        pat()->trig[t][s] = MN_TRIG | MN_SLIDE;
+        pat()->note[t][s] = pat()->note[t][prev];
+        mn_lock_clear_step(pat(), t, s);
+        cursor_to(s + 1);
+        mark_dirty();
+        note_name(pat()->note[t][s], a);
+        say("TIE", a);
+        break;
+    case B_EDIT:                                     /* BACK */
+        cursor_to(s - 1);
+        itoa_u((uint32_t)ui.cursor + 1u, a);
+        say("BACK TO", a);
+        break;
+    case B_SEL: ui.arm ^= MN_SLIDE; say("NEXT NOTE", ui.arm & MN_SLIDE ? "SLIDE" : "NO SLIDE"); break;
+    case B_ENV: ui.arm ^= MN_ACC; say("NEXT NOTE", ui.arm & MN_ACC ? "ACCENT" : "NO ACCENT"); break;
+    default: break;
+    }
 }
 
 static void step_toggle(int w)
@@ -467,8 +538,8 @@ static void white_down(int w)
 {
     uint32_t k = WHITE_K[w];
     if (ui.keys_mode) {
-        ui.key_note[k] = (uint8_t)clampi(key_base() + (int)k, 0, 127);
-        play_note(ui.track, ui.key_note[k], 100);
+        ui.key_note[k] = (uint8_t)key_note_of(k);
+        play_note(ui.track, ui.key_note[k], 100, (ui.keys & ~(1u << k)) != 0);
         return;
     }
     if (ui.keys >> BLACK_K[BK_ACC] & 1u || ui.keys >> BLACK_K[BK_SLD] & 1u) {   /* ACC / SLD + a step */
@@ -507,8 +578,8 @@ static void black_down(int b)
 {
     uint32_t k = BLACK_K[b];
     if (ui.keys_mode) {
-        ui.key_note[k] = (uint8_t)clampi(key_base() + (int)k, 0, 127);
-        play_note(ui.track, ui.key_note[k], 100);
+        ui.key_note[k] = (uint8_t)key_note_of(k);
+        play_note(ui.track, ui.key_note[k], 100, (ui.keys & ~(1u << k)) != 0);
         return;
     }
     ui.key_used &= ~(1u << k);
@@ -563,7 +634,7 @@ static void page_button(int v)
             int x = ui.lfo * 2 + ui.row[v] + 1;
             ui.lfo = (uint8_t)(x / 2 % 3);
             ui.row[v] = (uint8_t)(x & 1);
-        } else if (v != V_HOME) {
+        } else {
             ui.row[v] ^= 1u;
         }
     }
@@ -640,6 +711,10 @@ static void button(int b)
             say("KEPT", 0);
         return;
     }
+    if (step_rec() && (b == B_FX || b == B_SEL || b == B_ENV || b == B_LFO || b == B_EDIT)) {
+        step_rec_button(b);
+        return;
+    }
     switch (b) {
     case B_EDIT: page_button(PG_SYN); break;
     case B_ENV: page_button(PG_AMP); break;
@@ -658,9 +733,10 @@ static void button(int b)
     case B_PLAY: mn_play(!mn_playing); break;
     case B_REC:
         ui.rec ^= 1u;
+        ui.arm = 0;
         if (ui.rec && !mn_playing)
             ui.cursor = (uint8_t)(ui.spage * 16);
-        say("REC", ui.rec ? "ON" : "OFF");
+        say("REC", !ui.rec ? "OFF" : step_rec() ? "STEP: A NOTE A STEP" : ui.keys_mode || mn_playing ? "ON" : "ON (KEYS: STEP REC)");
         break;
     case B_OCTDN: case B_OCTUP: {
         int d = b == B_OCTUP ? 1 : -1;
@@ -720,7 +796,7 @@ static void midi_in(void)
         if (type == 0x90u && d2) {
             mn_note_on(t, (int)d1, (int)d2);
             ui.last_note[t] = (uint8_t)d1;
-            rec_note(t, (int)d1);
+            rec_note(t, (int)d1, 0);
         } else if (type == 0x80u || type == 0x90u) {
             mn_note_off(t, (int)d1);
         } else if (type == 0xB0u) {
@@ -745,7 +821,12 @@ static void encoders(void)
     if ((e = plat_enc(EN_SELECT)) != 0)
         set_track(ui.track + (int)e);
     if ((e = plat_enc(EN_ALGO)) != 0) {
-        if (ui.held && !ui.keys_mode) {               /* a step held: its octave */
+        if (step_rec()) {                             /* STEP REC: the cursor */
+            char a[8];
+            cursor_to(ui.cursor + (int)e);
+            itoa_u((uint32_t)ui.cursor + 1u, a);
+            say("STEP", a);
+        } else if (ui.held && !ui.keys_mode) {               /* a step held: its octave */
             int w;
             for (w = 0; w < NWHITE; w++)
                 if (ui.held >> w & 1u) {
@@ -772,7 +853,9 @@ static void encoders(void)
             for (w = 0; w < NWHITE; w++)
                 if (ui.held >> w & 1u) {
                     int s = step_of(w);
-                    pat()->note[ui.track][s] = (uint8_t)clampi(pat()->note[ui.track][s] + (int)e, 0, 127);
+                    int nn = pat()->scale ? mn_scale_move(pat()->scale, pat()->root, pat()->note[ui.track][s], (int)e)
+                                          : pat()->note[ui.track][s] + (int)e;   /* (in the scale, when one is set) */
+                    pat()->note[ui.track][s] = (uint8_t)clampi(nn, 0, 127);
                     ui.last_note[ui.track] = pat()->note[ui.track][s];
                     ui.key_used |= 1u << WHITE_K[w];
                 }
@@ -883,14 +966,32 @@ static void input(void)
 }
 
 /* ------------------------------------------------------------- screen --- */
-/* three bands: the header (28 px), the page (144), the steps (68) */
+/* three bands: the header (28 px), the page (144), the steps (68). Colour means something: each track has
+ * its hue (its cell in the strip, its steps, its values and graphs), each page its label's; white is what
+ * is touched, held or locked; red is recording. Neutral greys (the theme's) carry the structure. */
 #define HDR_H 28
 #define MAIN_Y 28
 #define MAIN_H 144
 #define FTR_Y 172
 #define FTR_H 68
 
+static const uint16_t TRK_COL[MN_NT] = {RGB(255, 96, 82), RGB(255, 160, 50), RGB(240, 214, 72),
+                                        RGB(96, 224, 138), RGB(76, 200, 240), RGB(182, 140, 255)};
+static const uint16_t PAGE_COL[NVIEWS] = {RGB(236, 236, 240), RGB(255, 138, 92), RGB(255, 210, 92), RGB(110, 210, 255),
+                                          RGB(200, 146, 255), RGB(200, 146, 255), RGB(200, 146, 255), RGB(124, 242, 154),
+                                          RGB(255, 255, 255), RGB(160, 168, 176)};
+#define C_REC RGB(255, 64, 56)
+
 static uint32_t hash(uint32_t h, uint32_t v) { return (h ^ v) * 16777619u; }
+
+static uint16_t mix(uint16_t a, uint16_t b, int t)   /* t 0..16: a -> b */
+{
+    int r = ((a >> 11) * (16 - t) + (b >> 11) * t) / 16, g = (((a >> 5) & 63) * (16 - t) + ((b >> 5) & 63) * t) / 16,
+        bl = ((a & 31) * (16 - t) + (b & 31) * t) / 16;
+    return (uint16_t)(r << 11 | g << 5 | bl);
+}
+static uint16_t tcol(int t) { return TRK_COL[(unsigned)t % MN_NT]; }
+static uint16_t tdim(int t, int k) { return mix(C_BLACK, tcol(t), k); }
 
 static void cv_round(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t c)
 {
@@ -914,15 +1015,32 @@ static void text_c(int32_t cx, int32_t y, const felucca_font_t *f, const char *s
 }
 
 static int blink(void) { return (plat_ms() / 250u) & 1u; }
+/* 0..16: how much of the touched-knob highlight is left (it fades over its last 400 ms) */
+static int touch_fade(void)
+{
+    uint32_t now = plat_ms();
+    if (ui.touched < 0 || (int32_t)(ui.touch_until - now) <= 0)
+        return 0;
+    return ui.touch_until - now >= 400u ? 16 : (int)((ui.touch_until - now) * 16u / 400u);
+}
+/* a chip: rounded, filled, its text dark */
+static int32_t chip(int32_t x, int32_t y, const char *s, uint16_t bg, uint16_t fg)
+{
+    int32_t w = text_w(&FONT_XS, s) + 10;
+    cv_round(x, y, w, 16, 5, bg);
+    cv_text(x + 5, y + 1, &FONT_XS, s, fg);
+    return x + w;
+}
 
 static void draw_header(void)
 {
     char t[24], *e;
-    int msg = plat_ms() < ui.msg_until, b = buf_of(song());
+    int msg = plat_ms() < ui.msg_until, b = buf_of(song()), beat = mn_playing && (mn_step & 3) == 0;
     uint32_t h = hash(hash(2166136261u, (uint32_t)msg | (uint32_t)mn_playing << 1 | (uint32_t)ui.rec << 2 |
                                             (uint32_t)mn_ext << 3 | (uint32_t)ui.track << 4 | (uint32_t)ui_dirty() << 8 |
                                             (uint32_t)(mn_queued() != 0) << 9 | (uint32_t)blink() << 10 |
-                                            (uint32_t)(ui.sel_slot + 1) << 11 | (uint32_t)kit()->machine[ui.track] << 18),
+                                            (uint32_t)(ui.sel_slot + 1) << 11 | (uint32_t)kit()->machine[ui.track] << 18 |
+                                            (uint32_t)beat << 23 | (uint32_t)step_rec() << 24),
                       (uint32_t)proj.tempo10 | (uint32_t)sb.slot[b] << 16 | (uint32_t)ui.queued_slot << 24);
     if (msg)
         h = hash(hash(h, (uint32_t)ui.msg[0][0] << 8 | (uint32_t)ui.msg[0][1] | (uint32_t)ui.msg[1][0] << 16),
@@ -931,57 +1049,54 @@ static void draw_header(void)
         return;
     ui.sig[0] = h;
     cv_begin(240, HDR_H, C_BLACK);
-    if (msg) {
-        int32_t x = cv_text(8, 6, &FONT_B, ui.msg[0], C_WHITE);
-        cv_text(x + 8, 6, &FONT_B, ui.msg[1], C_HI);
+    if (msg) {                                       /* a message: on the track's colour band */
+        int32_t x;
+        cv_rect(0, 0, 4, HDR_H, tcol(ui.track));
+        x = cv_text(10, 6, &FONT_B, ui.msg[0], C_WHITE);
+        cv_text(x + 8, 6, &FONT_B, ui.msg[1], tcol(ui.track));
     } else {
         int32_t x;
         slot_name(sb.slot[b], t);
-        x = cv_text(8, 6, &FONT_B, t, C_HI);
+        x = cv_text(8, 6, &FONT_B, t, C_WHITE);
         if (mn_queued() && blink()) {               /* the next pattern, waiting for the end of this one */
             e = s_cpy(t, ">");
             slot_name(ui.queued_slot, e);
-            x = cv_text(x + 2, 6, &FONT_B, t, C_WHITE);
+            x = cv_text(x + 2, 6, &FONT_B, t, C_HI);
         }
         if (ui_dirty())
-            cv_round(x + 3, 10, 4, 4, 2, C_DIM);
-        e = s_cpy(t, "T");
-        *e++ = (char)('1' + ui.track);
-        *e++ = ' ';
-        s_cpy(e, mn_machine_name(kit()->machine[ui.track]));
-        cv_text(x + 14, 6, &FONT_B, t, C_AMB);
+            cv_round(x + 3, 10, 4, 4, 2, C_GRAY);
+        x += 12;
+        t[0] = 'T';                                  /* the track: a chip in its colour, the machine beside it */
+        t[1] = (char)('1' + ui.track);
+        t[2] = 0;
+        cv_round(x, 5, 22, 18, 5, tcol(ui.track));
+        text_c(x + 11, 6, &FONT_B, t, C_BLACK);
+        cv_text(x + 27, 6, &FONT_B, mn_machine_name(kit()->machine[ui.track]), tcol(ui.track));
         /* the tempo, the transport */
         e = itoa_u(proj.tempo10 / 10u, t);
         *e++ = '.';
         *e++ = (char)('0' + proj.tempo10 % 10u);
         *e = 0;
         x = 232 - text_w(&FONT_B, t);
-        cv_text(x, 6, &FONT_B, t, mn_ext ? C_DIM : C_HI);
+        cv_text(x, 6, &FONT_B, t, mn_ext ? C_GRAY : C_WHITE);
         if (mn_ext) {
             x -= text_w(&FONT_XS, "EXT") + 5;
             cv_text(x, 8, &FONT_XS, "EXT", C_HI);
         }
         x -= 16;
-        if (mn_playing) {                            /* a triangle */
+        if (mn_playing) {                            /* a triangle: white on the beat */
             int32_t j;
             for (j = 0; j < 6; j++)
-                cv_rect(x + j, 8 + j, 1, 12 - 2 * j, C_HI);
+                cv_rect(x + j, 8 + j, 1, 12 - 2 * j, beat ? C_WHITE : C_HI);
         } else {
             cv_rect(x, 9, 9, 9, C_DIM);
         }
         if (ui.rec) {
             x -= 14;
-            cv_round(x, 8, 10, 10, 5, RGB(240, 60, 50));
+            cv_round(x, 8, 10, 10, 5, step_rec() && blink() ? mix(C_REC, C_BLACK, 8) : C_REC);
         }
     }
     cv_blit(0, 0);
-}
-
-static uint16_t mix(uint16_t a, uint16_t b, int t)   /* t 0..16: a -> b */
-{
-    int r = ((a >> 11) * (16 - t) + (b >> 11) * t) / 16, g = (((a >> 5) & 63) * (16 - t) + ((b >> 5) & 63) * t) / 16,
-        bl = ((a & 31) * (16 - t) + (b & 31) * t) / 16;
-    return (uint16_t)(r << 11 | g << 5 | bl);
 }
 
 /* the steps held (GRID): the first, for the page's lock view; -1 none */
@@ -996,14 +1111,18 @@ static int held_step(void)
     return -1;
 }
 
-static void draw_tracks(void)                       /* the strip: the six tracks */
+static void draw_tracks(void)                       /* the strip: the six tracks, in their colours */
 {
     int t;
     for (t = 0; t < MN_NT; t++) {
-        int32_t x = t * 40 + 1;
-        int sel = t == ui.track, muted = mn_mute >> t & 1u, lv;
+        int32_t x = t * 40 + 1, lv;
+        int sel = t == ui.track, muted = mn_mute >> t & 1u;
         char s[8];
-        uint16_t bg = sel ? C_HI : ui.flash[t] ? C_DIM : C_LINE, fg = sel ? C_BLACK : muted ? C_DIM : C_AMB;
+        uint16_t c = tcol(t), bg, fg;
+        bg = sel ? c : mix(tdim(t, 3), c, ui.flash[t] * 2);   /* a note: the cell lights up and fades */
+        fg = sel ? C_BLACK : muted ? C_DIM : c;
+        if (muted && !sel)
+            bg = mix(C_LINE, C_BLACK, 6);
         s[0] = (char)('1' + t);
         s[1] = ' ';
         s_cpy(s + 2, mn_machine_name(kit()->machine[t]));
@@ -1011,82 +1130,283 @@ static void draw_tracks(void)                       /* the strip: the six tracks
         text_c(x + 19, 2, &FONT_XS, s, fg);
         if (muted)
             cv_rect(x + 4, 9, 30, 1, sel ? C_BLACK : C_DIM);
-        lv = (int)(mn_level[t] * 60.0f);
+        lv = (int)(ui.meter[t] * 60.0f);
         lv = lv > 38 ? 38 : lv;
         cv_rect(x, 21, 38, 3, C_LINE);
         if (lv)
-            cv_rect(x, 21, lv, 3, muted ? C_DIM : C_HI);
+            cv_rect(x, 21, lv, 3, muted ? C_DIM : c);
+    }
+}
+
+/* ---- the pages' little graphs, in the track's colour, x .. x+w, y .. y+h */
+static void graph_env(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *p, uint16_t c)
+{
+    int32_t a = 2 + p[P_ATK] * (w / 4) / 127, hl, d, r, x0 = x, yb = y + h - 1;
+    int gate = p[P_HOLD] >= 127;
+    hl = gate ? w / 4 : p[P_HOLD] * (w / 6) / 127;
+    d = 3 + p[P_DEC] * (w / 3) / 127;
+    r = gate ? 3 + p[P_REL] * (w / 4) / 127 : 0;
+    cv_line(x0, yb, x0 + a, y, c);                                   /* attack */
+    cv_line(x0 + a, y, x0 + a + hl, y, c);                           /* hold */
+    if (gate) {
+        cv_line(x0 + a + hl, y, x0 + a + hl + r, yb, c);             /* release */
+    } else {
+        int32_t i, px = x0 + a + hl, py = y;
+        for (i = 1; i <= 8; i++) {                                   /* decay: a curve, in eight pieces */
+            int32_t nx = x0 + a + hl + d * i / 8, ny = yb - (int32_t)((float)(h - 1) * fm_exp2f(-(float)i * 0.75f));
+            cv_line(px, py, nx, ny, c);
+            px = nx;
+            py = ny;
+        }
+    }
+    cv_rect(x, yb + 1, w, 1, C_LINE);
+}
+
+static void graph_filter(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *p, uint16_t c)
+{
+    int32_t i, py = 0;
+    float hp = (float)p[P_BASE], lp = hp + (float)p[P_WDTH], hq = (float)p[P_HPQ] / 127.0f, lq = (float)p[P_LPQ] / 127.0f;
+    for (i = 0; i < w; i++) {
+        float f = (float)i * 127.0f / (float)(w - 1), g = 1.0f, d;
+        if (f < hp) {                                                /* below the high pass: 12 dB an octave */
+            d = (hp - f) / 12.7f;
+            g = fm_exp2f(-2.0f * d);
+        }
+        if (f > lp && lp < 126.0f) {
+            d = (f - lp) / 12.7f;
+            g *= fm_exp2f(-2.0f * d);
+        }
+        d = (f - hp) / 6.0f;                                         /* the resonances: bumps at the corners */
+        g += hq * 1.2f * fm_expf(-d * d);
+        d = (f - lp) / 6.0f;
+        if (lp < 126.0f)
+            g += lq * 1.4f * fm_expf(-d * d);
+        g = g > 2.0f ? 2.0f : g;
+        {
+            int32_t yy = y + h - 1 - (int32_t)(g * 0.5f * (float)(h - 2));
+            if (i)
+                cv_line(x + i - 1, py, x + i, yy, c);
+            py = yy;
+        }
+    }
+    cv_rect(x, y + h, w, 1, C_LINE);
+}
+
+static float scope[3][48];                          /* the LFOs' recent values, for the scope */
+static uint8_t scope_w;
+static void graph_lfo(int32_t x, int32_t y, int32_t w, int32_t h, int k, uint16_t c)
+{
+    int32_t i, py = 0, n = w < 48 ? w : 48;
+    cv_rect(x, y + h / 2, n, 1, C_LINE);
+    for (i = 0; i < n; i++) {
+        float v = scope[k][(scope_w + (uint32_t)i + 48u - (uint32_t)n) % 48u];
+        int32_t yy = y + h / 2 - (int32_t)(v * (float)(h / 2 - 1));
+        if (i)
+            cv_line(x + i - 1, py, x + i, yy, i == n - 1 ? C_WHITE : c);
+        py = yy;
+    }
+    cv_round(x + n - 2, py - 2, 5, 5, 2, C_WHITE);
+}
+
+static void graph_delay(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *p, uint16_t c)
+{
+    float lv = (float)p[P_DSND] / 127.0f, fb = (float)p[P_DFB] / 127.0f * 1.1f;
+    int32_t gap = 4 + p[P_DTIM] * 14 / 127, xx = x, i;
+    cv_rect(x, y, 3, h, C_WHITE);                                    /* the note */
+    for (i = 0; i < 8 && lv > 0.03f; i++) {                          /* its echoes */
+        int32_t hh = (int32_t)((float)h * (lv > 1.0f ? 1.0f : lv));
+        xx += gap;
+        if (xx + 3 > x + w)
+            break;
+        cv_rect(xx, y + h - hh, 3, hh, c);
+        lv *= fb;
+    }
+    cv_rect(x, y + h, w, 1, C_LINE);
+}
+
+static void graph_arp(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *p, uint16_t c)
+{
+    static const int8_t CH[MN_NCHORD][4] = {{0, -1, -1, -1}, {0, 7, -1, -1}, {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 5, 7, -1},
+                                            {0, 4, 7, 11}, {0, 3, 7, 10}, {0, 4, 7, 10}, {0, 4, 7, 9}, {0, 3, 6, -1},
+                                            {0, 4, 8, -1}, {0, 3, 10, 14}};
+    int notes[16], n = 0, o, j, mode = p[P_ARPM], i;
+    const int8_t *ch = CH[p[P_ACHD] % MN_NCHORD];
+    if (mode == ARP_OFF) {
+        cv_text(x, y + 1, &FONT_XS, "ARP OFF", C_DIM);
+        return;
+    }
+    for (o = 0; o <= (p[P_ARNG] & 3); o++)
+        for (j = 0; j < 4 && ch[j] >= 0 && n < 16; j++)
+            notes[n++] = ch[j] + 12 * o;
+    for (i = 0; i < 12; i++) {                                       /* the first twelve notes it plays */
+        int idx, top = notes[n - 1] ? notes[n - 1] : 1;
+        switch (mode) {
+        case ARP_DOWN: idx = n - 1 - i % n; break;
+        case ARP_UPDN: { int per = n > 1 ? 2 * n - 2 : 1, q = i % per; idx = q < n ? q : per - q; break; }
+        case ARP_RAND: idx = (int)((uint32_t)(i * 7 + 3) % (uint32_t)n); break;
+        default: idx = i % n; break;
+        }
+        cv_rect(x + i * (w / 12), y + h - 3 - notes[idx] * (h - 4) / top, w / 12 - 2, 3, c);
     }
 }
 
 static void param_cell(int32_t x, int32_t y, const char *name, const char *val, int frac_x44, int bip, int active,
-                       int hot, int locked)
+                       int hot, int locked, uint16_t c)
 {
-    uint16_t vc = hot ? C_WHITE : locked ? C_WHITE : active ? C_HI : C_DIM;
+    uint16_t vc = locked ? C_WHITE : active ? c : mix(C_BLACK, C_GRAY, 11);
     int32_t cx = x + 30;
-    text_c(cx, y, &FONT_XS, name, active ? (locked ? C_HI : C_GRAY) : C_DIM);
     const char *q = val;
     int lower = 0;
+    if (hot) {                                      /* the knob just turned: its cell lights up, then fades */
+        cv_round(x + 3, y - 2, 54, 45, 5, mix(tdim(ui.track, 3), tcol(ui.track), hot / 4));
+        vc = C_WHITE;
+    }
+    text_c(cx, y, &FONT_XS, name, active ? (locked ? C_WHITE : C_GRAY) : C_DIM);
     for (; *q; q++)                                 /* (the big face has no lower case) */
         lower |= *q >= 'a' && *q <= 'z';
     if (lower || text_w(&FONT_M, val) > 56)
         text_c(cx, y + 17, &FONT_B, val, vc);
     else
         text_c(cx, y + 13, &FONT_M, val, vc);
-    cv_rect(cx - 22, y + 39, 44, 3, C_LINE);
-    if (bip) {
-        int32_t m = cx, e2 = cx - 22 + frac_x44;
-        cv_rect(e2 < m ? e2 : m, y + 39, (e2 < m ? m - e2 : e2 - m) + 1, 3, active ? (locked ? C_WHITE : C_HI) : C_DIM);
-    } else if (frac_x44) {
-        cv_rect(cx - 22, y + 39, frac_x44, 3, active ? (locked ? C_WHITE : C_HI) : C_DIM);
+    cv_round(cx - 22, y + 38, 44, 4, 2, C_LINE);
+    {
+        uint16_t bc = locked ? C_WHITE : active ? c : mix(C_BLACK, c, 6);
+        if (bip) {
+            int32_t m = cx, e2 = cx - 22 + frac_x44;
+            cv_round(e2 < m ? e2 : m, y + 38, (e2 < m ? m - e2 : e2 - m) + 2, 4, 2, bc);
+            cv_rect(m, y + 36, 1, 8, C_GRAY);
+        } else if (frac_x44) {
+            cv_round(cx - 22, y + 38, frac_x44 < 4 ? 4 : frac_x44, 4, 2, bc);
+        }
     }
-    if (locked)
-        cv_round(x + 2, y + 1, 5, 5, 2, C_WHITE);
+    if (locked) {                                   /* a lock: a white diamond */
+        cv_rect(x + 6, y + 1, 1, 7, C_WHITE);
+        cv_rect(x + 4, y + 3, 5, 3, C_WHITE);
+        cv_rect(x + 5, y + 2, 3, 5, C_WHITE);
+    }
+}
+
+/* the page's title: its label in its colour, what it is about, its graph, which four values the knobs have */
+static void page_title(int view, const char *name, const char *sub)
+{
+    int32_t x = 4, r;
+    x = chip(x, 28, name, PAGE_COL[view], C_BLACK);
+    if (sub)
+        cv_text(x + 6, 28, &FONT_S, sub, C_GRAY);
+    for (r = 0; r < 2; r++)                          /* the rows: the one the knobs turn, bright */
+        cv_round(232, 30 + r * 7, 6, 5, 2, r == ui.row[ui.view] ? PAGE_COL[view] : C_LINE);
+}
+
+static void draw_step_rec(void)                     /* STEP REC: a note a step, on to the next */
+{
+    int t = ui.track, s = ui.cursor % pat_len(), prev = (s + pat_len() - 1) % pat_len(), i, lo = 127, hi = 0;
+    static const char *const SOFT[5] = {"REST", "SLD", "ACC", "TIE", "BACK"};   /* FX SEL ENV LFO EDIT */
+    static const uint8_t SOFT_ARM[5] = {0, MN_SLIDE, MN_ACC, 0, 0};
+    char a[16], *e;
+    uint16_t c = tcol(t);
+    int32_t x = chip(4, 28, "STEP REC", C_REC, C_WHITE);
+    e = s_cpy(a, "STEP ");
+    e = itoa_u((uint32_t)s + 1u, e);
+    *e++ = '/';
+    itoa_u((uint32_t)pat_len(), e);
+    cv_text(x + 8, 28, &FONT_S, a, C_WHITE);
+    cv_text(236 - text_w(&FONT_XS, "LEGATO = SLIDE"), 30, &FONT_XS, "LEGATO = SLIDE", C_GRAY);
+    /* the note before the cursor, big */
+    if (pat()->trig[t][prev] & MN_TRIG) {
+        note_name(pat()->note[t][prev], a);
+        cv_text(10, 50, &FONT_L, a, c);
+        if (pat()->trig[t][prev] & MN_ACC)
+            chip(10, 86, "ACC", c, C_BLACK);
+        if (pat()->trig[t][prev] & MN_SLIDE)
+            chip(50, 86, "SLD", c, C_BLACK);
+    } else {
+        cv_text(10, 50, &FONT_L, "--", C_DIM);
+    }
+    /* a piano roll of the track's steps on this page: the cursor white */
+    for (i = 0; i < pat_len() && i < MN_NSTEP; i++)
+        if (pat()->trig[t][i] & MN_TRIG) {
+            lo = pat()->note[t][i] < lo ? pat()->note[t][i] : lo;
+            hi = pat()->note[t][i] > hi ? pat()->note[t][i] : hi;
+        }
+    if (hi - lo < 12) {
+        lo = (lo + hi) / 2 - 6;
+        hi = lo + 12;
+    }
+    cv_round(98, 48, 138, 54, 4, mix(C_BLACK, C_LINE, 10));
+    for (i = 0; i < 16; i++) {
+        int st = ui.spage * 16 + i;
+        int32_t xx = 101 + i * 8 + (i / 4);
+        if (st >= pat_len())
+            continue;
+        if (st == s)
+            cv_rect(xx - 1, 49, 8, 52, blink() ? C_WHITE : C_GRAY);
+        if (pat()->trig[t][st] & MN_TRIG) {
+            int32_t yy = 96 - (pat()->note[t][st] - lo) * 44 / (hi - lo);
+            cv_rect(xx, yy, 6, 4, (pat()->trig[t][st] & MN_ACC) ? C_WHITE : c);
+            if (pat()->trig[t][st] & MN_SLIDE)
+                cv_rect(xx - 3, yy + 1, 3, 2, c);
+        }
+    }
+    /* the five buttons above the keys, as they sit on the panel: what they do here */
+    for (i = 0; i < 5; i++) {
+        static const char *const BTN_NAME[5] = {"FX", "SEL", "ENV", "LFO", "EDIT"};
+        int32_t bx = 4 + i * 47;
+        int on = SOFT_ARM[i] && (ui.arm & SOFT_ARM[i]);
+        cv_round(bx, 108, 43, 20, 5, on ? c : mix(C_BLACK, C_LINE, 12));
+        text_c(bx + 21, 110, &FONT_XS, SOFT[i], on ? C_BLACK : C_WHITE);
+        text_c(bx + 21, 129, &FONT_XS, BTN_NAME[i], C_DIM);
+    }
 }
 
 static void draw_track_page(void)
 {
-    int t = ui.track, m = kit()->machine[t], pg = page_of_view(), r, i, hs = held_step();
+    int t = ui.track, m = kit()->machine[t], pg = page_of_view(), r, i, hs = held_step(), hot = touch_fade();
     char a[24], *e;
-    /* the title: the page, the machine (SYN), the LFO's target; a step held: its note and locks */
-    if (hs >= 0) {
+    uint16_t c = tcol(t);
+    const uint8_t *par = kit()->par[t];
+    if (hs >= 0) {                                   /* a step held: its note and its locks */
         e = s_cpy(a, "STEP ");
         e = itoa_u((uint32_t)hs + 1u, e);
+        chip(4, 28, a, C_WHITE, C_BLACK);
         if (pat()->trig[t][hs] & MN_TRIG) {
-            *e++ = ' ';
-            *e++ = ' ';
-            e = note_name(pat()->note[t][hs], e);
+            note_name(pat()->note[t][hs], a);
+            cv_text(70, 28, &FONT_B, a, c);
+        } else {
+            cv_text(70, 29, &FONT_XS, "NO TRIG: TRIGLESS LOCK", C_GRAY);
         }
-        cv_text(6, 28, &FONT_B, a, C_WHITE);
         e = itoa_u((uint32_t)mn_step_locks(pat(), t, hs), a);
         s_cpy(e, mn_step_locks(pat(), t, hs) == 1 ? " LOCK" : " LOCKS");
-        cv_text(234 - text_w(&FONT_XS, a), 30, &FONT_XS, a, C_HI);
+        cv_text(234 - text_w(&FONT_XS, a), 29, &FONT_XS, a, C_WHITE);
     } else {
-        int32_t x = cv_text(6, 28, &FONT_B, mn_page_name(pg), C_HI);
+        const char *sub = 0;
+        char nm[8];
         if (pg == PG_SYN)
-            cv_text(x + 8, 28, &FONT_S, mn_machine_long(m), C_AMB);
-        else if (pg >= PG_LFO1 && pg <= PG_LFO3) {
+            sub = mn_machine_long(m);
+        s_cpy(nm, mn_page_name(pg));
+        page_title(ui.view, nm, sub);
+        switch (pg) {
+        case PG_AMP: graph_env(150, 30, 76, 14, par, c); break;
+        case PG_FILT: graph_filter(150, 30, 76, 14, par, c); break;
+        case PG_FX: graph_delay(150, 30, 76, 14, par, c); break;
+        case PG_TRK: graph_arp(150, 30, 76, 14, par, c); break;
+        case PG_LFO1: case PG_LFO2: case PG_LFO3: {
             int b = pg * 8;
-            float lv = mn_lfo_val[t][pg - PG_LFO1];
             e = s_cpy(a, "> ");
-            mn_dest_text(kit()->machine, t, kit()->par[t][b + L_TRK], kit()->par[t][b + L_DEST], e);
-            cv_text(x + 8, 28, &FONT_S, a, C_AMB);
-            cv_rect(150, 34, 40, 3, C_LINE);       /* the LFO moving */
-            cv_rect(170 + (int32_t)(lv * 19.0f) - 1, 32, 3, 7, C_HI);
+            mn_dest_text(kit()->machine, t, par[b + L_TRK], par[b + L_DEST], e);
+            cv_text(54, 28, &FONT_S, a, par[b + L_DEST] ? C_GRAY : C_DIM);
+            graph_lfo(176, 30, 48, 14, pg - PG_LFO1, c);
+            break;
         }
-        a[0] = ui.row[ui.view] ? '5' : '1';
-        a[1] = '-';
-        a[2] = ui.row[ui.view] ? '8' : '4';
-        a[3] = 0;
-        cv_text(234 - text_w(&FONT_XS, a), 30, &FONT_XS, a, C_DIM);
+        default: break;
+        }
     }
     for (r = 0; r < 2; r++) {
         int active = r == ui.row[ui.view];
         int32_t y = 50 + r * 47;
         if (active)
-            cv_round(2, y - 3, 236, 46, 5, C_LINE);
+            cv_round(2, y - 3, 236, 46, 5, tdim(t, 2));
         for (i = 0; i < 4; i++) {
-            int p = pg * 8 + r * 4 + i, v = kit()->par[t][p], lk = -1, mx;
+            int p = pg * 8 + r * 4 + i, v = par[p], lk = -1, mx;
             const mn_pinfo_t *in = mn_par_info(m, p);
             char val[16];
             if (hs >= 0)
@@ -1095,12 +1415,38 @@ static void draw_track_page(void)
                 v = lk;
             mx = in->max ? in->max : 1;
             if (p >= P_LFO1 && p < P_ARPM && ((p - P_LFO1) & 7) == L_DEST)
-                mn_dest_text(kit()->machine, t, kit()->par[t][p - L_DEST + L_TRK], v, val);
+                mn_dest_text(kit()->machine, t, par[p - L_DEST + L_TRK], v, val);
             else
                 mn_par_text(m, p, v, val);
             param_cell(i * 60, y, in->name, val, 44 * v / mx, in->kind == PK_BIP, active,
-                       active && plat_ms() < ui.touch_until && ui.touched == i, lk >= 0);
+                       active && ui.touched == i ? hot : 0, lk >= 0, c);
         }
+    }
+}
+
+static void draw_scale_keys(int32_t x, int32_t y, int32_t w, int32_t h)   /* one octave from the root */
+{
+    static const uint8_t BLK[12] = {0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0};
+    int i, nw = 0;
+    int32_t kw = w / 7;
+    mn_pat_t *p = pat();
+    for (i = 0; i < 12; i++) {                       /* white keys first, then the black ones over them */
+        int in = mn_in_scale(p->scale, p->root, i), root = i == p->root;
+        uint16_t c = root ? tcol(ui.track) : in ? mix(C_WHITE, tcol(ui.track), 5) : mix(C_BLACK, C_GRAY, 8);
+        if (BLK[i])
+            continue;
+        cv_round(x + nw * kw, y, kw - 2, h, 3, c);
+        text_c(x + nw * kw + kw / 2 - 1, y + h - 15, &FONT_XS, NOTE_NAME[i], root || in ? C_BLACK : C_GRAY);
+        nw++;
+    }
+    for (i = 0, nw = 0; i < 12; i++) {
+        int in = mn_in_scale(p->scale, p->root, i), root = i == p->root;
+        uint16_t c = root ? tcol(ui.track) : in ? mix(C_BLACK, tcol(ui.track), 11) : C_LINE;
+        if (!BLK[i]) {
+            nw++;
+            continue;
+        }
+        cv_round(x + nw * kw - kw / 3 - 1, y, kw * 2 / 3, h * 3 / 5, 3, c);
     }
 }
 
@@ -1108,55 +1454,66 @@ static void draw_home(void)
 {
     mn_pat_t *p = pat();
     char a[24], v[4][12], *e;
-    int i, t, s;
+    int i, t, s, row = ui.row[V_HOME], hot = touch_fade();
     e = s_cpy(a, "PATTERN ");
     slot_name(sb.slot[buf_of(song())], e);
-    cv_text(6, 28, &FONT_B, a, C_HI);
+    page_title(V_HOME, a, 0);
     e = itoa_u((uint32_t)(MN_NLOCK - mn_lock_rows_free(p)), a);
     s_cpy(e, "/32 LOCKS");
-    cv_text(234 - text_w(&FONT_XS, a), 30, &FONT_XS, a, C_DIM);
-    e = itoa_u(proj.tempo10 / 10u, v[0]);
-    *e++ = '.';
-    *e++ = (char)('0' + proj.tempo10 % 10u);
-    *e = 0;
-    e = itoa_u(p->swing, v[1]);
-    s_cpy(e, "%");
-    itoa_u(p->len, v[2]);
-    s_cpy(v[3], SPEED_NAME[p->speed % MN_NSPEED]);
-    cv_round(2, 47, 236, 46, 5, C_LINE);
-    {
+    cv_text(226 - text_w(&FONT_XS, a), 29, &FONT_XS, a, C_DIM);
+    cv_round(2, 47, 236, 46, 5, tdim(ui.track, 2));
+    if (!row) {
         static const char *const N[4] = {"TEMPO", "SWING", "LENGTH", "SPEED"};
-        static const int MX[4] = {2700, 30, 63, MN_NSPEED - 1};
         int fr[4];
-        fr[0] = 44 * (proj.tempo10 - 300) / MX[0];
-        fr[1] = 44 * (p->swing - 50) / MX[1];
-        fr[2] = 44 * (p->len - 1) / MX[2];
-        fr[3] = 44 * p->speed / MX[3];
+        e = itoa_u(proj.tempo10 / 10u, v[0]);
+        *e++ = '.';
+        *e++ = (char)('0' + proj.tempo10 % 10u);
+        *e = 0;
+        e = itoa_u(p->swing, v[1]);
+        s_cpy(e, "%");
+        itoa_u(p->len, v[2]);
+        s_cpy(v[3], SPEED_NAME[p->speed % MN_NSPEED]);
+        fr[0] = 44 * (proj.tempo10 - 300) / 2700;
+        fr[1] = 44 * (p->swing - 50) / 30;
+        fr[2] = 44 * (p->len - 1) / 63;
+        fr[3] = 44 * p->speed / (MN_NSPEED - 1);
         for (i = 0; i < 4; i++)
-            param_cell(i * 60, 50, N[i], v[i], fr[i], 0, 1, plat_ms() < ui.touch_until && ui.touched == i, 0);
+            param_cell(i * 60, 50, N[i], v[i], fr[i], 0, 1, ui.touched == i ? hot : 0, 0, tcol(ui.track));
+        /* every track's steps, this page, in their colours */
+        for (t = 0; t < MN_NT; t++)
+            for (s = 0; s < 16; s++) {
+                int st = ui.spage * 16 + s;
+                int32_t x = 8 + s * 14 + (s / 4) * 2, y = 98 + t * 7;
+                uint16_t c = C_LINE;
+                if (st >= p->len)
+                    continue;
+                if (p->trig[t][st] & MN_TRIG)
+                    c = (mn_mute >> t & 1u) ? C_DIM : (p->trig[t][st] & MN_ACC) ? tcol(t) : tdim(t, 10);
+                if (st == mn_step)
+                    c = (p->trig[t][st] & MN_TRIG) ? C_WHITE : C_GRAY;
+                cv_rect(x, y, 12, 5, c);
+                if (t == ui.track && s == 0)
+                    cv_rect(2, y, 3, 5, tcol(t));
+            }
+    } else {
+        static const char *const N[3] = {"ROOT", "SCALE", "SNAP"};
+        s_cpy(v[0], NOTE_NAME[p->root % 12]);
+        s_cpy(v[1], mn_scale_name(p->scale));
+        s_cpy(v[2], p->snap ? "ON" : "OFF");
+        for (i = 0; i < 3; i++)
+            param_cell(i * 60, 50, N[i], v[i], i == 0 ? 44 * p->root / 11 : i == 1 ? 44 * p->scale / (MN_NSCALE - 1) : 0,
+                       0, 1, ui.touched == i ? hot : 0, 0, tcol(ui.track));
+        cv_text(184, 52, &FONT_XS, p->snap ? "KEYS SNAP" : "KEYS: LEDS", C_GRAY);
+        cv_text(184, 68, &FONT_XS, "TO THE", C_DIM);
+        cv_text(184, 80, &FONT_XS, "SCALE", C_DIM);
+        draw_scale_keys(8, 98, 224, 42);
     }
-    /* every track's steps, this page */
-    for (t = 0; t < MN_NT; t++)
-        for (s = 0; s < 16; s++) {
-            int st = ui.spage * 16 + s;
-            int32_t x = 8 + s * 14 + (s / 4) * 2, y = 98 + t * 7;
-            uint16_t c = C_LINE;
-            if (st >= p->len)
-                continue;
-            if (p->trig[t][st] & MN_TRIG)
-                c = (mn_mute >> t & 1u) ? C_DIM : (p->trig[t][st] & MN_ACC) ? C_HI : C_AMB;
-            if (st == mn_step)
-                c = (p->trig[t][st] & MN_TRIG) ? C_WHITE : C_GRAY;
-            cv_rect(x, y, 12, 5, c);
-            if (t == ui.track && s == 0)
-                cv_rect(2, y, 3, 5, C_HI);
-        }
 }
 
 static void draw_glo(void)
 {
     char v[8][12], *e;
-    int i, r;
+    int i, r, hot = touch_fade();
     static const char *const N[8] = {"TRK CH", "AUTO CH", "CLK IN", "CLK OUT", "MIDI OUT", "FOLLOW", "THEME", "CPU"};
     e = itoa_u(proj.midi_base + 1u, v[0]);
     *e++ = '-';
@@ -1172,15 +1529,15 @@ static void draw_glo(void)
     s_cpy(v[6], PALETTES[proj.theme % NPALETTES].name);
     e = itoa_u(plat_cpu_pct(), v[7]);
     s_cpy(e, "%");
-    cv_text(6, 28, &FONT_B, "GLOBAL", C_HI);
-    cv_text(234 - text_w(&FONT_XS, "MNM-1 " OM_VERSION), 30, &FONT_XS, "MNM-1 " OM_VERSION, C_DIM);
+    page_title(V_GLO, "GLOBAL", 0);
+    cv_text(226 - text_w(&FONT_XS, "MNM-1 " OM_VERSION), 29, &FONT_XS, "MNM-1 " OM_VERSION, C_DIM);
     for (r = 0; r < 2; r++) {
         int active = r == ui.row[V_GLO];
         if (active)
-            cv_round(2, 47 + r * 47, 236, 46, 5, C_LINE);
+            cv_round(2, 47 + r * 47, 236, 46, 5, mix(C_BLACK, C_LINE, 12));
         for (i = 0; i < 4; i++)
             param_cell(i * 60, 50 + r * 47, N[r * 4 + i], v[r * 4 + i], 0, 0, active,
-                       active && plat_ms() < ui.touch_until && ui.touched == i, 0);
+                       active && ui.touched == i ? hot : 0, 0, C_HI);
     }
 }
 
@@ -1192,28 +1549,41 @@ static void draw_main(void)
     const uint8_t *par = kit()->par[ui.track];
     for (t = 0; t < MN_NT; t++) {
         uint8_t tc = mn_trig_count[t];
-        ui.flash[t] = tc != ui.trig_seen[t] ? 4 : ui.flash[t] ? ui.flash[t] - 1 : 0;
+        float lv = mn_level[t];
+        ui.flash[t] = tc != ui.trig_seen[t] ? 6 : ui.flash[t] ? ui.flash[t] - 1 : 0;
         ui.trig_seen[t] = tc;
-        h = hash(h, (uint32_t)(mn_level[t] * 60.0f) | (uint32_t)kit()->machine[t] << 8 | (uint32_t)(ui.flash[t] != 0) << 12);
+        ui.meter[t] = lv > ui.meter[t] ? lv : ui.meter[t] * 0.82f;   /* meters: up at once, down slowly */
+        h = hash(h, (uint32_t)(ui.meter[t] * 60.0f) | (uint32_t)kit()->machine[t] << 8 | (uint32_t)ui.flash[t] << 12);
     }
+    for (i = 0; i < 3; i++)                          /* the scopes: one value a frame */
+        scope[i][scope_w] = mn_lfo_val[ui.track][i];
+    scope_w = (uint8_t)((scope_w + 1u) % 48u);
     for (i = 0; i < MN_NP; i += 4)
         h = hash(h, (uint32_t)par[i] | (uint32_t)par[i + 1] << 8 | (uint32_t)par[i + 2] << 16 | (uint32_t)par[i + 3] << 24);
-    h = hash(h, (uint32_t)(plat_ms() < ui.touch_until) | (uint32_t)(ui.touched + 1) << 1 | (uint32_t)ui.spage << 4);
-    if (ui.view == V_HOME)
+    h = hash(h, (uint32_t)touch_fade() | (uint32_t)(ui.touched + 1) << 5 | (uint32_t)ui.spage << 8 |
+                    (uint32_t)step_rec() << 12 | (uint32_t)ui.arm << 13 | (uint32_t)ui.cursor << 16);
+    if (step_rec()) {
+        h = hash(h, (uint32_t)blink());
+        for (i = 0; i < MN_NSTEP; i++)
+            h = hash(h, (uint32_t)pat()->trig[ui.track][i] | (uint32_t)pat()->note[ui.track][i] << 8);
+    }
+    if (ui.view == V_HOME) {
         h = hash(hash(h, (uint32_t)(mn_step + 1) | (uint32_t)pat()->len << 8 | (uint32_t)pat()->swing << 16 |
-                             (uint32_t)pat()->speed << 24), proj.tempo10 | (uint32_t)mn_lock_rows_free(pat()) << 16);
-    if (ui.view == V_HOME)
+                             (uint32_t)pat()->speed << 24), proj.tempo10 | (uint32_t)mn_lock_rows_free(pat()) << 16 |
+                                                                (uint32_t)pat()->root << 22 | (uint32_t)pat()->scale << 26 |
+                                                                (uint32_t)pat()->snap << 31);
         for (t = 0; t < MN_NT; t++)
             for (i = 0; i < 16; i += 4) {               /* (bytes: the pattern is not word aligned) */
                 const uint8_t *g = &pat()->trig[t][ui.spage * 16 + i];
                 h = hash(h, (uint32_t)g[0] | (uint32_t)g[1] << 8 | (uint32_t)g[2] << 16 | (uint32_t)g[3] << 24);
             }
+    }
     if (ui.view == V_GLO)
         h = hash(h, (uint32_t)proj.midi_base | (uint32_t)proj.auto_ch << 4 | (uint32_t)proj.clock_in << 9 |
                         (uint32_t)proj.clock_out << 10 | (uint32_t)proj.midi_out << 11 | (uint32_t)proj.follow << 12 |
                         (uint32_t)proj.theme << 13 | plat_cpu_pct() << 16);
     if (ui.view >= PG_LFO1 && ui.view <= PG_LFO3)
-        h = hash(h, (uint32_t)(int32_t)(mn_lfo_val[ui.track][ui.lfo] * 19.0f));
+        h = hash(h, ui.frame);                      /* (the scope moves every frame) */
     if (held_step() >= 0) {
         int r;
         for (r = 0; r < MN_NLOCK; r++)
@@ -1225,7 +1595,9 @@ static void draw_main(void)
     ui.sig[1] = h;
     cv_begin(240, MAIN_H, C_BLACK);
     draw_tracks();
-    if (view_is_track())
+    if (view_is_track() && step_rec())
+        draw_step_rec();
+    else if (view_is_track())
         draw_track_page();
     else if (ui.view == V_HOME)
         draw_home();
@@ -1238,78 +1610,111 @@ static void draw_steps(void)
 {
     mn_pat_t *p = pat();
     int t = ui.track, w, len = pat_len(), pages = (len + 15) / 16, cur_page = mn_step >= 0 ? mn_step / 16 : -1;
-    uint32_t h = hash(2166136261u, (uint32_t)(mn_step + 1) | (uint32_t)ui.spage << 8 | (uint32_t)len << 12 |
-                                       (uint32_t)t << 20 | (uint32_t)ui.keys_mode << 24 | (uint32_t)ui.rec << 25 |
-                                       (uint32_t)(ui.octave + 4) << 26);
+    int lo = 127, hi = 0, melodic = kit()->machine[t] != MC_DRUM, pulse;
+    uint32_t now = plat_ms(), h;
+    uint16_t c = tcol(t);
     char a[24], *e;
-    h = hash(h, ui.held | (uint32_t)ui.cursor << 20);
+    if (mn_step != ui.step_seen) {                   /* a new step: it lights up for a moment */
+        ui.step_seen = mn_step;
+        ui.pulse_step = mn_step;
+        ui.pulse_t = now;
+    }
+    pulse = mn_step >= 0 && now - ui.pulse_t < 120u;
+    h = hash(2166136261u, (uint32_t)(mn_step + 1) | (uint32_t)ui.spage << 8 | (uint32_t)len << 12 | (uint32_t)t << 20 |
+                              (uint32_t)ui.keys_mode << 24 | (uint32_t)ui.rec << 25 | (uint32_t)(ui.octave + 4) << 26 |
+                              (uint32_t)pulse << 29 | (uint32_t)step_rec() << 30);
+    h = hash(h, ui.held | (uint32_t)ui.cursor << 20 | (uint32_t)(step_rec() && blink()) << 28 | (uint32_t)p->scale << 16);
+    h = hash(h, (uint32_t)p->root | (uint32_t)p->snap << 4 | ui.keys << 5);
+    for (w = 0; w < len; w++) {
+        if (p->trig[t][w] & MN_TRIG) {
+            lo = p->note[t][w] < lo ? p->note[t][w] : lo;
+            hi = p->note[t][w] > hi ? p->note[t][w] : hi;
+        }
+    }
     for (w = 0; w < 16; w++) {
         int s = ui.spage * 16 + w;
-        h = hash(h, (uint32_t)p->trig[t][s] | (uint32_t)mn_step_locks(p, t, s) << 4);
+        h = hash(h, (uint32_t)p->trig[t][s] | (uint32_t)mn_step_locks(p, t, s) << 4 | (uint32_t)p->note[t][s] << 12);
     }
     if (h == ui.sig[2])
         return;
     ui.sig[2] = h;
+    if (hi - lo < 12) {
+        lo = (lo + hi) / 2 - 6;
+        hi = lo + 12;
+    }
     cv_begin(240, FTR_H, C_BLACK);
     cv_rect(0, 0, 240, 1, C_LINE);
     for (w = 0; w < 16; w++) {
         int s = ui.spage * 16 + w;
         int32_t x = 6 + w * 14 + (w / 4) * 2;
         uint8_t f = p->trig[t][s];
-        uint16_t c = C_LINE;
+        uint16_t bg = (w / 4) & 1 ? mix(C_LINE, C_BLACK, 4) : C_LINE;   /* (beats: every other four a shade darker) */
         if (s >= len) {
             cv_rect(x, 26, 12, 2, C_LINE);
             continue;
         }
         if (f & MN_TRIG)
-            c = (f & MN_ACC) ? C_HI : C_AMB;
+            bg = (f & MN_ACC) ? c : tdim(t, 10);
+        if (s == mn_step && pulse && (f & MN_TRIG))
+            bg = mix(bg, C_WHITE, 10);                /* the note playing: a flash */
         if (ui.held >> w & 1u && !ui.keys_mode)
-            c = C_WHITE;
-        cv_round(x, 6, 12, 22, 3, c);
-        if (s == mn_step) {                          /* the step playing: a bar under it */
-            cv_rect(x, 31, 12, 3, C_WHITE);
+            bg = C_WHITE;
+        cv_round(x, 6, 12, 22, 3, bg);
+        if ((f & MN_TRIG) && melodic) {              /* the note's height: a piano roll in the steps */
+            int32_t yy = 24 - (p->note[t][s] - lo) * 16 / (hi - lo);
+            cv_rect(x + 2, yy, 8, 2, (f & MN_ACC) || (ui.held >> w & 1u) ? C_BLACK : mix(C_BLACK, c, 4));
         }
         if (f & MN_SLIDE)
-            cv_rect(x + 6, 23, 14, 3, C_WHITE);
+            cv_rect(x - 4, 14, 6, 3, C_WHITE);       /* a slide: a bridge from the step before */
         if (mn_step_locks(p, t, s))
-            cv_round(x + 4, 9, 4, 4, 2, (f & MN_TRIG) ? C_BLACK : C_HI);
-        if (ui.rec && !mn_playing && ui.keys_mode && s == ui.cursor)
-            cv_rect(x, 3, 12, 2, C_HI);
+            cv_round(x + 4, 8, 4, 4, 2, (f & MN_TRIG) ? C_BLACK : C_WHITE);
+        if (s == mn_step)                            /* the step playing: a bar under it */
+            cv_rect(x, 31, 12, 3, C_WHITE);
+        if (step_rec() && s == ui.cursor) {          /* STEP REC: the cursor */
+            uint16_t cc = blink() ? C_WHITE : C_REC;
+            cv_rect(x - 1, 4, 14, 1, cc);
+            cv_rect(x - 1, 29, 14, 1, cc);
+            cv_rect(x - 1, 4, 1, 26, cc);
+            cv_rect(x + 12, 4, 1, 26, cc);
+        }
     }
-    /* the line below: the mode, the pages of steps, the octave */
+    /* the line below: the mode, the pages of steps, the scale or the black keys' tools */
     {
         int32_t x = 6;
-        const char *mode = ui.keys_mode ? "KEYS" : "GRID";
-        int32_t mw = text_w(&FONT_XS, mode) + 10;
-        cv_round(x, 42, mw, 18, 5, ui.keys_mode ? C_HI : C_LINE);
-        cv_text(x + 5, 44, &FONT_XS, mode, ui.keys_mode ? C_BLACK : C_AMB);
-        x += mw + 8;
+        const char *mode = step_rec() ? "STEP REC" : ui.keys_mode ? "KEYS" : "GRID";
+        x = chip(x, 42, mode, step_rec() ? C_REC : ui.keys_mode ? c : C_LINE, step_rec() ? C_WHITE : ui.keys_mode ? C_BLACK : C_AMB);
+        x += 8;
         for (w = 0; w < pages; w++) {
-            uint16_t c = w == ui.spage ? C_HI : w == cur_page ? C_GRAY : C_LINE;
-            cv_rect(x + w * 14, 49, 11, 5, c);
+            uint16_t pc = w == ui.spage ? c : w == cur_page ? C_GRAY : C_LINE;
+            cv_rect(x + w * 12, 47, 9, 6, pc);
         }
-        x += pages * 14 + 6;
+        x += pages * 12 + 6;
         e = itoa_u((uint32_t)ui.spage * 16u + 1u, a);
         *e++ = '-';
         e = itoa_u((uint32_t)(ui.spage * 16 + 16 > len ? len : ui.spage * 16 + 16), e);
         *e++ = '/';
         itoa_u((uint32_t)len, e);
-        cv_text(x, 44, &FONT_XS, a, C_DIM);
+        cv_text(x, 43, &FONT_XS, a, C_DIM);
         if (ui.keys_mode) {
-            e = s_cpy(a, "OCT ");
+            e = s_cpy(a, NOTE_NAME[p->root % 12]);
+            *e++ = ' ';
+            e = s_cpy(e, mn_scale_name(p->scale));
+            if (p->snap)
+                e = s_cpy(e, " SNAP");
+            e = s_cpy(e, "  OCT ");
             if (ui.octave > 0)
                 *e++ = '+';
             if (ui.octave < 0)
                 *e++ = '-';
             itoa_u((uint32_t)(ui.octave < 0 ? -ui.octave : ui.octave), e);
-            cv_text(234 - text_w(&FONT_XS, a), 44, &FONT_XS, a, C_AMB);
+            cv_text(234 - text_w(&FONT_XS, a), 43, &FONT_XS, a, c);
         } else {
             int b;
             int32_t bx = 234;
             for (b = NBLACK - 1; b >= MN_NT; b--) {   /* the black keys' tools, as a reminder */
                 int on = ui.keys >> BLACK_K[b] & 1u;
                 bx -= text_w(&FONT_XS, BK_NAME[b]) + 4;
-                cv_text(bx, 44, &FONT_XS, BK_NAME[b], on ? C_WHITE : C_DIM);
+                cv_text(bx, 43, &FONT_XS, BK_NAME[b], on ? C_WHITE : C_DIM);
             }
         }
     }
@@ -1319,20 +1724,35 @@ static void draw_steps(void)
 static void leds(void)
 {
     static const uint8_t VIEW_BTN[NVIEWS] = {B_EDIT, B_ENV, B_SEL, B_FX, B_LFO, B_LFO, B_LFO, B_ARP, B_HOME, B_GLO};
-    uint32_t b = 1u << VIEW_BTN[ui.view], k = 0, d = 0;
+    uint32_t b = step_rec() ? 0u : 1u << VIEW_BTN[ui.view], k = 0, d = 0;
     int w, t;
     if (mn_playing && (mn_step & 3) != 0)            /* PLAY: lit, dark on each beat */
         b |= 1u << B_PLAY;
-    if (ui.rec)
+    if (ui.rec && (!step_rec() || blink()))
         b |= 1u << B_REC;
+    if (step_rec()) {                                /* STEP REC: its five buttons lit; slide / accent armed blink */
+        b |= 1u << B_FX | 1u << B_LFO | 1u << B_EDIT;
+        if (!(ui.arm & MN_SLIDE) || blink())
+            b |= 1u << B_SEL;
+        if (!(ui.arm & MN_ACC) || blink())
+            b |= 1u << B_ENV;
+    }
     if (!ui.keys_mode)
         b |= 1u << B_SEQ;
     if (ui.keys_mode ? ui.octave != 0 : ui.spage != 0)
         b |= ui.keys_mode && ui.octave < 0 ? 1u << B_OCTDN : 1u << B_OCTUP;
     if (ui.ask && blink())
         b |= 1u << B_SAVE;
-    if (ui.keys_mode) {
+    if (ui.keys_mode) {                              /* the keys held lit; the scale's keys dim, its roots lit */
+        mn_pat_t *p = pat();
         k = ui.keys;
+        for (w = 0; w < NKEYS; w++) {
+            int n = key_base() + w;
+            if ((n - p->root) % 12 == 0 || (n - p->root) % 12 == -12)
+                k |= 1u << w;
+            else if (p->scale && mn_in_scale(p->scale, p->root, n))
+                d |= 1u << w;
+        }
     } else {
         for (w = 0; w < NWHITE; w++) {
             int s = step_of(w), on = s < pat_len() && (pat()->trig[ui.track][s] & MN_TRIG);
@@ -1381,6 +1801,7 @@ void ui_init(void)
     memset(&ui, 0, sizeof ui);
     ui.touched = -1;
     ui.sel_slot = -1;
+    ui.step_seen = -1;
     for (i = 0; i < MN_NT; i++)
         ui.last_note[i] = 60;
     for (i = 0; i < NBUF; i++) {

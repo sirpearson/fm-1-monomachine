@@ -68,7 +68,7 @@ void project_apply(void)
 int song_load(uint32_t slot, mn_song_t *s)
 {
     int n = plat_store_load(OBJ_PAT0 + slot, s, sizeof *s);
-    if (n == (int)sizeof *s && mn_song_valid(s))
+    if (mn_song_load_size(s, n))                    /* (a song of 0.1, without the scale, too) */
         return 0;
     if (slot == 0)
         mn_song_demo(s);

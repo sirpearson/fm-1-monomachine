@@ -43,6 +43,13 @@ FONTSETS = {
                  ("B", "Rajdhani-Bold.ttf", 17, 1, False, 32, 126),
                  ("M", "Rajdhani-Bold.ttf", 26, 1, False, 32, 95),
                  ("L", "Rajdhani-Bold.ttf", 35, 1, False, 32, 95)],
+    # MNM-1: Barlow for the small text (labels, names), Chakra Petch (an instrument's squared face) for the
+    # headers and the values
+    "mnm": [("XS", "BarlowSemiCondensed-SemiBold.ttf", 12, 1, False, 32, 126),
+            ("S", "BarlowSemiCondensed-Medium.ttf", 15, 1, False, 32, 126),
+            ("B", "ChakraPetch-SemiBold.ttf", 14, 1, False, 32, 126),
+            ("M", "ChakraPetch-SemiBold.ttf", 21, 1, False, 32, 95),
+            ("L", "ChakraPetch-Bold.ttf", 30, 1, False, 32, 95)],
     "chakra": [("XS", "ChakraPetch-SemiBold.ttf", 11, 1, False, 32, 126),
                ("S", "ChakraPetch-Medium.ttf", 14, 1, False, 32, 126),
                ("B", "ChakraPetch-Bold.ttf", 14, 1, False, 32, 126),
@@ -50,7 +57,7 @@ FONTSETS = {
                ("L", "ChakraPetch-Bold.ttf", 29, 1, False, 32, 95)],
 }
 import os  # noqa: E402
-FONTSET = os.environ.get("X0X_FONTSET", "barlow")    # the others need X0X_FONT_DIRS (not in assets/)
+FONTSET = os.environ.get("X0X_FONTSET", "mnm")    # the others need X0X_FONT_DIRS (not in assets/)
 FONTDIRS = [Path(p) for p in os.environ.get("X0X_FONT_DIRS", "").split(":") if p]
 SIZES = FONTSETS[FONTSET]
 PAD = 2

@@ -439,6 +439,36 @@ int main(int argc, char **argv)
     ok(!mn_song_valid(&song), "another magic is not a song");
     ok(sizeof(mn_song_t) <= 3840u, "a song fits a flash object");
 
+    /* ACID: an accented note is louder and brighter than a plain one */
+    {
+        double e1, e2;
+        float p1, p2;
+        fresh();
+        mn_track_init(&song.kit, 0, MC_ACID);
+        song.pat.trig[0][0] = MN_TRIG;
+        song.pat.trig[0][8] = MN_TRIG | MN_ACC;
+        song.pat.note[0][0] = song.pat.note[0][8] = 36;
+        mn_play(1);
+        p1 = run(120, &e1);
+        run(880, 0);
+        p2 = run(120, &e2);
+        mn_play(0);
+        ok(p1 > 0.05f && p2 > p1 * 1.15f && e2 > e1 * 1.3, "ACID: the accent is louder");
+    }
+    /* scales */
+    ok(mn_in_scale(2, 0, 63) && !mn_in_scale(2, 0, 64) && mn_in_scale(0, 5, 61), "in scale: C minor has Eb, not E; chromatic has all");
+    ok(mn_scale_snap(2, 0, 64) == 63 && mn_scale_snap(1, 0, 61) == 60 && mn_scale_snap(11, 0, 61) == 60 &&
+       mn_scale_snap(11, 0, 62) == 63 && mn_scale_snap(1, 2, 63) == 62, "snap: to the nearest note of the scale (a tie: down)");
+    ok(mn_scale_move(1, 0, 60, 1) == 62 && mn_scale_move(1, 0, 60, -1) == 59 && mn_scale_move(1, 0, 61, 1) == 62 &&
+       mn_scale_move(11, 0, 60, 5) == 72, "move: steps in the scale");
+    /* a song of format 1 (0.1, without the scale) loads */
+    mn_song_demo(&song);
+    song.format = 1u;
+    song.pat.root = 7;
+    ok(mn_song_load_size(&song, (int)MN_SONG_SIZE_V1) && song.format == MN_SONG_FORMAT && song.pat.root == 0 &&
+       song.pat.trig[0][0] == MN_TRIG, "a song of format 1 loads, without a scale");
+    ok(!mn_song_load_size(&song, 100), "a short song does not");
+
     /* the demo, 4 bars, to listen to */
     fresh();
     mn_song_demo(&song);

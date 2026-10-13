@@ -32,11 +32,16 @@ shot lock.png
 key w3 down
 wait 50
 shot lockview.png
-# its note up a fifth (PRESETS), an octave down (ALGORITHM)
+# its note up seven steps of the pattern's scale (PRESETS; the demo is in C minor: C4 -> C5), an octave
+# down (ALGORITHM)
 spin PRESET 7
 spin ALGO -1
 key w3 up
-expect note5_3 55
+expect note5_3 60
+key w3 down
+spin PRESET 1
+key w3 up
+expect note5_3 62
 expect trig5_3 1
 # two steps held: one turn locks both
 key w5 down

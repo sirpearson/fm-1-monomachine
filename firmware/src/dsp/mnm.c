@@ -68,6 +68,8 @@ static const machine_t MACH[MC_N] = {
                              {"PICK", 127, 30, PK_NUM}, {"EXCT", 127, 0, PK_NUM}, {"BRST", 127, 100, PK_NUM}, {"STIF", 127, 0, PK_NUM}}},
     {"SINE", "Sine fold", 1, {TUNE, FINE, {"FOLD", 127, 0, PK_NUM}, {"DRIV", 127, 0, PK_NUM},
                                {"SUB", 127, 0, PK_NUM}, {"OCT2", 127, 0, PK_NUM}, {"PDEC", 127, 30, PK_NUM}, {"PAMT", 127, 0, PK_NUM}}},
+    {"ACID", "Acid bass", 0, {TUNE, {"WAVE", 1, 0, PK_ENUM}, {"CUT", 127, 36, PK_NUM}, {"RES", 127, 88, PK_NUM},
+                              {"ENV", 127, 72, PK_NUM}, {"DEC", 127, 56, PK_NUM}, {"ACC", 127, 90, PK_NUM}, {"DRIV", 127, 24, PK_NUM}}},
 };
 
 const char *mn_machine_name(int m) { return MACH[(unsigned)m < MC_N ? m : 0].name; }
@@ -144,6 +146,7 @@ void mn_par_text(int machine, int p, int v, char *b)
             case MC_FM: s = p == 7 ? ALGO_NAME[v & 3] : RATIO_NAME[v % 24]; break;
             case MC_FMDYN: s = RATIO_NAME[v % 24]; break;
             case MC_DRUM: s = DRUM_NAME[v & 7]; break;
+            case MC_ACID: s = v ? "SQR" : "SAW"; break;
             default: break;
             }
         } else if (p >= P_LFO1 && p < P_ARPM) {
@@ -279,6 +282,8 @@ void mn_track_init(mn_kit_t *k, int t, int m)
         k->par[t][P_DEC] = 127;
         k->par[t][P_REL] = 127;
     }
+    if (m == MC_ACID)                                  /* a bass line: short notes, a quick release */
+        k->par[t][P_REL] = 12;
 }
 
 /* the kit every new slot starts with: three drums, a bass, an FM voice and a pad */
@@ -295,10 +300,9 @@ void mn_kit_init(mn_kit_t *k)
     mn_track_init(k, 2, MC_DRUM);
     p = k->par[2];
     p[1] = 2, p[4] = 50, p[6] = 84, p[7] = 40, p[P_VOL] = 78, p[P_PAN] = 76;
-    mn_track_init(k, 3, MC_SAW);
+    mn_track_init(k, 3, MC_ACID);
     p = k->par[3];
-    p[2] = 22, p[3] = 2, p[4] = 70, p[P_REL] = 20, p[P_WDTH] = 52, p[P_LPQ] = 64, p[P_FDEC] = 46, p[P_WOFS] = 100;
-    p[P_VOL] = 84, p[P_GATE] = 10, p[P_ACNT] = 90;
+    p[P_REL] = 12, p[P_VOL] = 92, p[P_GATE] = 9, p[P_ACNT] = 70, p[P_DSND] = 14, p[P_DTIM] = 23, p[P_DFB] = 40;
     mn_track_init(k, 4, MC_FM);
     p = k->par[4];
     p[2] = 8, p[3] = 52, p[4] = 6, p[5] = 20, p[P_HOLD] = 0, p[P_DEC] = 70, p[P_REL] = 50;
@@ -329,6 +333,10 @@ void mn_pat_clear(mn_pat_t *p)
     p->speed = 2;
     p->swing = 50;
     p->rsv = 0;
+    p->root = 0;
+    p->scale = 0;
+    p->snap = 0;
+    p->rsv2 = 0;
 }
 
 void mn_song_init(mn_song_t *s)
@@ -341,7 +349,8 @@ void mn_song_init(mn_song_t *s)
 
 void mn_song_demo(mn_song_t *s)
 {
-    static const uint8_t BASS[16] = {36, 0, 0, 36, 0, 0, 48, 0, 36, 0, 39, 41, 0, 0, 43, 0};
+    static const uint8_t BASS[16] = {36, 36, 48, 36, 0, 39, 36, 0, 41, 43, 36, 48, 0, 46, 43, 39};
+    static const uint8_t BFL[16] = {MN_ACC, 0, MN_SLIDE, 0, 0, MN_ACC, 0, 0, 0, MN_SLIDE, MN_ACC, MN_SLIDE, 0, MN_ACC, 0, MN_SLIDE};
     mn_pat_t *p = &s->pat;
     int i;
     mn_song_init(s);
@@ -355,7 +364,7 @@ void mn_song_demo(mn_song_t *s)
     p->trig[2][7] = p->trig[2][13] = MN_TRIG;
     for (i = 0; i < 16; i++)
         if (BASS[i]) {
-            p->trig[3][i] = MN_TRIG | (i == 0 || i == 8 ? MN_ACC : 0u) | (i == 11 ? MN_SLIDE : 0u);
+            p->trig[3][i] = (uint8_t)(MN_TRIG | BFL[i]);
             p->note[3][i] = BASS[i];
         }
     p->trig[4][3] = p->trig[4][11] = MN_TRIG;
@@ -366,6 +375,8 @@ void mn_song_demo(mn_song_t *s)
     p->note[5][0] = 60;
     p->note[5][8] = 56;
     p->swing = 54;
+    p->root = 0;                                       /* C minor: the bass line's */
+    p->scale = 2;
 }
 
 int mn_song_valid(mn_song_t *s)
@@ -394,7 +405,64 @@ int mn_song_valid(mn_song_t *s)
         s->pat.speed = 2;
     if (s->pat.swing < 50 || s->pat.swing > 80)
         s->pat.swing = 50;
+    if (s->pat.root > 11)
+        s->pat.root = 0;
+    if (s->pat.scale >= MN_NSCALE)
+        s->pat.scale = 0;
+    s->pat.snap = s->pat.snap != 0;
     return 1;
+}
+
+int mn_song_load_size(mn_song_t *s, int bytes)
+{
+    if (bytes == (int)sizeof *s && s->format == MN_SONG_FORMAT)
+        return mn_song_valid(s);
+    if (bytes == (int)MN_SONG_SIZE_V1 && s->format == 1u && s->magic == MN_SONG_MAGIC) {
+        s->pat.root = s->pat.scale = s->pat.snap = s->pat.rsv2 = 0;   /* (the bytes after the old song) */
+        s->format = MN_SONG_FORMAT;
+        return mn_song_valid(s);
+    }
+    return 0;
+}
+
+/* ---- scales: twelve bits, bit 0 the root */
+static const uint16_t SCALE_BITS[MN_NSCALE] = {
+    0xFFF, 0xAB5, 0x5AD, 0x6AD, 0x5AB, 0xAD5, 0x6B5, 0x56B, 0x9AD, 0xAAD, 0x295, 0x4A9, 0x4E9, 0x555, 0x249};
+static const char *const SCALE_NAME[MN_NSCALE] = {"CHROM", "MAJOR", "MINOR", "DORIAN", "PHRYG", "LYDIAN", "MIXO",
+                                                  "LOCRIAN", "HARM MIN", "MEL MIN", "MAJ PENT", "MIN PENT", "BLUES",
+                                                  "WHOLE", "DIM 7"};
+const char *mn_scale_name(int sc) { return SCALE_NAME[(unsigned)sc < MN_NSCALE ? sc : 0]; }
+int mn_in_scale(int sc, int root, int note)
+{
+    int d = ((note - root) % 12 + 12) % 12;
+    return SCALE_BITS[(unsigned)sc < MN_NSCALE ? sc : 0] >> d & 1;
+}
+int mn_scale_snap(int sc, int root, int note)
+{
+    int d;
+    for (d = 0; d < 12; d++) {
+        if (note - d >= 0 && mn_in_scale(sc, root, note - d))
+            return note - d;
+        if (note + d <= 127 && mn_in_scale(sc, root, note + d))
+            return note + d;
+    }
+    return note;
+}
+int mn_scale_move(int sc, int root, int note, int steps)
+{
+    int dir = steps > 0 ? 1 : -1, n = mn_scale_snap(sc, root, note);
+    if (n != note && ((dir > 0) == (n > note)))
+        steps -= dir;                              /* (snapping already went one way) */
+    while (steps) {
+        int m = n + dir;
+        while (m >= 0 && m <= 127 && !mn_in_scale(sc, root, m))
+            m += dir;
+        if (m < 0 || m > 127)
+            break;
+        n = m;
+        steps -= dir;
+    }
+    return n;
 }
 
 /* ---- locks */
@@ -751,6 +819,11 @@ static void m_note_on(voice_t *v, int machine)
         break;
     case MC_SINE:
         v->ph[0] = v->ph[1] = v->ph[2] = 0.0f;
+        break;
+    case MC_ACID:                                         /* the envelope restarts; an accent charges the sweep */
+        v->aux[5] = v->vel > 0.8f ? 1.0f : 0.0f;
+        if (v->aux[5] > 0.0f)
+            v->aux[4] += (1.0f - v->aux[4]) * 0.55f;
         break;
     case MC_FMDYN:
     case MC_FM:
@@ -1212,6 +1285,40 @@ static void m_render(voice_t *v, int machine, float f0, float *out, uint32_t n)
         v->plk_w %= PLK_N;
         break;
     }
+    case MC_ACID: {
+        /* after the TB-303: a saw or a square into a four-pole ladder with its resonance, an envelope that
+         * only decays (a slide does not restart it), the accent: louder, a faster decay, and a sweep that
+         * builds up over accented notes in a row */
+        float acc = v->aux[5] * e[6] * (1.0f / 127.0f), dt = f0 / MN_SR, sq = e[1] > 0.5f ? 1.0f : 0.0f;
+        float dk = fm_expf(-6.9f / ((acc > 0.0f ? 0.2f : 0.18f + e[5] * e[5] * (2.2f / 16129.0f)) * MN_SR) * (float)n);
+        float oct, fc, g, k, drv = 1.0f + e[7] * (5.0f / 127.0f), comp, gain;
+        v->m_env1 *= dk;
+        v->aux[4] *= fm_expf(-(float)n / (0.35f * MN_SR));            /* the sweep's capacitor drains */
+        oct = e[2] * (7.6f / 127.0f) + v->m_env1 * e[4] * (4.6f / 127.0f) + acc * (v->m_env1 * 1.6f + v->aux[4] * 1.4f);
+        fc = 42.0f * fm_exp2f(oct);
+        if (fc > MN_SR * 0.42f)
+            fc = MN_SR * 0.42f;
+        g = 1.0f - fm_expf(-FM_TWO_PI * fc / MN_SR);
+        k = e[3] * (3.85f / 127.0f) + acc * 0.25f;
+        if (k > 3.95f)
+            k = 3.95f;
+        comp = 1.0f + k * 0.6f;
+        gain = (0.85f + acc * 0.6f) / fm_tanhf(drv);
+        if (dt > 0.45f)
+            dt = 0.45f;
+        for (i = 0; i < n; i++) {
+            float p = wrap1(v->ph[0] + dt), x, y;
+            v->ph[0] = p;
+            x = sq > 0.0f ? pulse_blep(p, dt, 0.5f) * 0.8f : saw_blep(p, dt);
+            y = fm_tanhf((x - k * v->aux[3]) * 0.8f);
+            v->aux[0] += g * (y - v->aux[0]);
+            v->aux[1] += g * (v->aux[0] - v->aux[1]);
+            v->aux[2] += g * (v->aux[1] - v->aux[2]);
+            v->aux[3] = fm_flush(v->aux[3] + g * (v->aux[2] - v->aux[3]));
+            out[i] = fm_tanhf(v->aux[3] * comp * drv) * gain;
+        }
+        break;
+    }
     default: {                                            /* MC_SINE */
         float fold = e[2] * (5.0f / 127.0f), drv = e[3] * (10.0f / 127.0f), sub = e[4] * (1.0f / 127.0f);
         float oc2 = e[5] * (1.0f / 127.0f), pdk = fm_expf(-6.9f / ((0.004f + e[6] * e[6] * (0.4f / 16129.0f)) * MN_SR) * (float)n);
@@ -1279,6 +1386,8 @@ static void v_trigger(int t, float note, float vel, int slide, uint32_t gate)
     v->target = note;
     if (slide && sounding) {
         v->glide = v->e[P_PORT] > 0.5f ? env_time(v->e[P_PORT]) * 0.5f : 0.06f;
+        if (v->stage == 4 && v->e[P_HOLD] >= 126.5f)
+            v->stage = 2;                          /* (released a moment early: it holds on) */
     } else {
         v->glide = v->e[P_PORT] > 0.5f ? env_time(v->e[P_PORT]) * 0.5f : 0.0f;
         if (v->glide <= 0.0f || !sounding)
@@ -1674,6 +1783,7 @@ static struct {
     uint32_t since_tick;
 } sq;
 
+static float step_len(uint32_t count);
 static void step_fire(int s)
 {
     mn_song_t *sg = cur;
@@ -1708,6 +1818,14 @@ static void step_fire(int s)
             gate = (uint32_t)(pat_step_samples() * (float)(gate_v + 1) * (1.0f / 16.0f));
             if (gate < 64u)
                 gate = 64u;
+            {   /* the next step slides from this one: the gate stays open into it (a 303's tie) */
+                int nx = (s + 1) % (sg->pat.len ? sg->pat.len : 16);
+                uint8_t nf = sg->pat.trig[t][nx];
+                if ((nf & MN_TRIG) && (nf & MN_SLIDE)) {
+                    uint32_t g2 = (uint32_t)(step_len(sq.count + 1u) * 1.1f);   /* (the time to the next step) */
+                    gate = gate > g2 ? gate : g2;
+                }
+            }
             if ((int)base_val(t, P_ARPM) != ARP_OFF) {
                 arp_start(t, note, vel, 0, 0);
             } else {
