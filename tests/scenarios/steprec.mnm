@@ -1,55 +1,59 @@
 # STEP REC: a bass line a note a step, with rests, a tie, a slide, an accent, back; legato = slide
 wait 300
-tapkey b3
-expect track 3
-# clear track 4 (GRID: COPY held + PASTE)
+press SEQ
+tapkey b1
+release SEQ
+expect track 1
+# clear track 2 (SEQ held: CPY held + PST)
+press SEQ
 key b9 down
 tapkey b10
 key b9 up
+release SEQ
 tap SEQ
 expect keys 1
 tap REC
 expect rec 1
 # step 1: C (key 7 = C4 in the demo's C minor)
 tapkey 7
-expect trig3_0 1
-expect note3_0 60
+expect trig1_0 1
+expect note1_0 60
 # step 2: a rest (FX)
 tap FX
-expect trig3_1 0
+expect trig1_1 0
 # step 3: Eb with an accent (ENV arms it)
 tap ENV
 tapkey 10
-expect trig3_2 3
-expect note3_2 63
+expect trig1_2 3
+expect note1_2 63
 # step 4: a tie (LFO): Eb held on
 tap LFO
-expect trig3_3 5
-expect note3_3 63
+expect trig1_3 5
+expect note1_3 63
 # step 5: slide armed (SEL), then G
 tap SEL
 tapkey 14
-expect trig3_4 5
-expect note3_4 67
+expect trig1_4 5
+expect note1_4 67
 # step 6 and 7: legato, a key pressed while another is held slides
 key 7 down
 key 12 down
 key 7 up
 key 12 up
-expect trig3_5 1
-expect trig3_6 5
-expect note3_6 65
+expect trig1_5 1
+expect trig1_6 5
+expect note1_6 65
 shot steprec.png
 # back (EDIT) twice, then overwrite step 6 with Bb
 tap EDIT
 tap EDIT
 tapkey 17
-expect note3_5 70
-expect trig3_5 1
+expect note1_5 70
+expect trig1_5 1
 # ALGORITHM moves the cursor: forward 3, a note on step 10
 turn ALGO 3
 tapkey 7
-expect trig3_9 1
+expect trig1_9 1
 # SNAP: E (key 11) in C minor plays Eb
 tap REC
 tap HOME
@@ -63,7 +67,7 @@ shot scale.png
 tap REC
 tapkey 11
 # (REC again: the cursor back to the page's first step)
-expect note3_0 63
+expect note1_0 63
 tap REC
 # out of STEP REC the page buttons are pages again
 tap ENV

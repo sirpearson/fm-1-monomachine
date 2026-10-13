@@ -1,7 +1,9 @@
 # MIDI in: notes on the auto channel play the track selected, on the tracks' channels their tracks;
 # CC 16.. set values; program change picks a pattern; clock leads the sequencer
 wait 300
+press SEQ
 tapkey b3
+release SEQ
 midi 90 3C 64
 wait 100
 expect notes3 1

@@ -1,0 +1,91 @@
+# The KIT on the black keys: a key picks a voice (and plays it), the white keys are its steps; its values on
+# the SYN and TRK pages, locks on its steps, pads in KEYS, recording, STEP REC stacking the pads
+wait 300
+expect track 0
+expect machine0 12
+# GRID: black key 2 (the snare): picked, played
+tapkey b1
+expect voice 1
+expect track 0
+expect kvhits1 1
+# from a synth track a black key goes to the KIT
+press SEQ
+tapkey b2
+release SEQ
+expect track 2
+tapkey b2
+expect track 0
+expect voice 2
+# the clap's steps: on, off
+tapkey w1
+expect kv2_1 1
+tapkey w1
+expect kv2_1 0
+tapkey w5
+# its values: SYN page, already up (TYPE TUNE DCAY TONE / PDEC PAMT NOIS SNAP)
+expect view 0
+spin K3 10
+expect kvpar2_2 60
+# ALGORITHM: its type (clap -> tom)
+turn ALGO 1
+expect kvpar2_0 5
+turn ALGO -1
+expect kvpar2_0 4
+# a lock on the step: tune +5 (PRESETS on the held step), decay (KNOB 3)
+key w5 down
+spin PRESET 5
+spin K3 -20
+key w5 up
+expect kvlock2_1_5 69
+expect kvlock2_2_5 40
+expect kv2_5 1
+shot voice.png
+key w5 down
+wait 40
+shot voicelock.png
+key w5 up
+# TRK page: LEVL PAN DSND PROB / ACNT CHOK RTRG MUTE
+tap ARP
+tap ARP
+spin K4 1
+expect kvpar2_15 1
+shot mix.png
+spin K4 -1
+# accent (SEQ + ACC held + a step)
+press SEQ
+key b7 down
+tapkey w5
+key b7 up
+release SEQ
+expect kv2_5 3
+# the AMP page's envelope does nothing on the KIT
+tap ENV
+spin K1 10
+expect par0_8 0
+# playing: the demo's kick on its steps
+tap PLAY
+wait 1000
+expect kvhits0 >1
+expect kvhits3 >0
+tap PLAY
+wait 50
+# KEYS: the black keys are pads, REC records them; the white keys play the voice picked, pitched
+tap SEQ
+expect keys 1
+tapkey b3
+expect voice 3
+expect kvhits3 1
+tapkey 7
+expect kvhits3 1
+# STEP REC on the KIT: pads stack on the cursor's step, FX moves on
+tap REC
+tapkey b0
+tapkey b3
+tap FX
+tapkey b1
+expect kv0_0 1
+expect kv3_0 1
+expect kv1_1 1
+shot steprec.png
+tap REC
+expect dropped 0

@@ -5,7 +5,7 @@ monofoniche** ispirata all'**Elektron Monomachine**: ogni traccia ha la sua *mac
 lo stesso percorso di filtri/inviluppi/effetti, tre LFO e il suo delay; uno step sequencer da 64
 passi con **parameter lock**, trigless lock, slide, accent, swing, probabilità e arpeggiatore.
 
-![AMP](docs/img/syn.png) ![STEP REC](docs/img/steprec.png) ![Scala](docs/img/scale.png) ![Lock](docs/img/lock.png) ![LFO](docs/img/lfo.png) ![Pattern](docs/img/home.png)
+![KIT](docs/img/kit.png) ![KIT MIX](docs/img/kitmix.png) ![AMP](docs/img/syn.png) ![STEP REC](docs/img/steprec.png) ![Scala](docs/img/scale.png) ![Lock](docs/img/lock.png) ![LFO](docs/img/lfo.png) ![Pattern](docs/img/home.png)
 
 > **Stato: sperimentale, non ancora provato su hardware reale.** Il codice compila con il toolchain
 > JieLi e passa tutti i test nel simulatore host (audio, schermo, LED, MIDI, salvataggio). La
@@ -44,12 +44,12 @@ suonabile con mouse, tastiera del computer e tastiera MIDI. Vedi [L'emulatore](#
 
 | | |
 | --- | --- |
-| **Tracce** | 6, ognuna una voce monofonica |
-| **Macchine** | 12: ACID (basso stile TB-303), SAW (supersaw), PULS (pulse/PWM), ENS (ensemble/accordi), SID (chip 6581), FM (3 operatori), FMDY (FM con inviluppo d'indice), WAVE (wavetable), DRUM (8 percussioni), NOIS (rumore), PLUK (corda pizzicata), SINE (sinusoide con wavefolder e pitch envelope) |
+| **Tracce** | 6: la traccia 1 è il **KIT** (11 voci di batteria, una per tasto nero), le tracce 2–6 sono sintetizzatori monofonici |
+| **Macchine** | KIT (traccia 1) e 12 per i synth: ACID (basso stile TB-303), SAW (supersaw), PULS (pulse/PWM), ENS (ensemble/accordi), SID (chip 6581), FM (3 operatori), FMDY (FM con inviluppo d'indice), WAVE (wavetable), DRUM (8 percussioni), NOIS (rumore), PLUK (corda pizzicata), SINE (sinusoide con wavefolder e pitch envelope) |
 | **Percorso per traccia** | macchina → filtro passa-alto + passa-basso (BASE / WIDTH, risonanze, inviluppo AD) → inviluppo d'ampiezza (ATK, HOLD, DEC, REL) → distorsione → EQ a campana → riduzione sample-rate → volume/pan → delay di traccia (sincronizzato al tempo, feedback filtrato) |
 | **Modulazione** | 3 LFO per traccia, 7 forme d'onda, 5 modi di trigger, velocità a tempo; ognuno può puntare **qualsiasi parametro di qualsiasi traccia** (anche gli altri LFO) |
 | **Sequencer** | fino a 64 step per pattern, note per step, accent, slide, 32 righe di parameter lock per pattern, trigless lock, swing 50–80 %, velocità 1/2x–2x, probabilità, arpeggiatore per traccia, sync MIDI clock in/out |
-| **Memoria** | 32 slot (A01–A16, B01–B16), ognuno con un pattern e il suo kit, in flash |
+| **Memoria** | 16 slot (A01–A16), ognuno con un pattern e il suo kit, in flash; 148 KB tenuti da parte per i campioni (il campionatore arriverà) |
 
 Un **kit** sono le sei macchine con tutti i loro valori; un **pattern** sono gli step, le note e i lock.
 Ogni slot contiene entrambi, come sui groovebox Elektron più recenti: cambiare pattern cambia anche i
@@ -61,7 +61,8 @@ Il pannello dell'FM-1: 27 tasti (F3–G5), 14 pulsanti, 7 encoder infiniti, la m
 
 ### Due modi dei tasti (pulsante SEQ)
 
-**GRID** (SEQ acceso): i 16 tasti bianchi sono i 16 step della traccia selezionata.
+**GRID** (SEQ acceso): i 16 tasti bianchi sono i 16 step della traccia selezionata; gli 11 tasti neri
+sono le **11 voci del KIT**.
 
 | Azione | Effetto |
 | --- | --- |
@@ -69,21 +70,31 @@ Il pannello dell'FM-1: 27 tasti (F3–G5), 14 pulsanti, 7 encoder infiniti, la m
 | tenere uno step + girare KNOB 1–4 | **parameter lock** del parametro sulla pagina corrente, solo su quello step |
 | tenere più step + girare | lock su tutti gli step tenuti |
 | tenere uno step vuoto + girare | **trigless lock**: cambia il suono da quello step senza suonare una nota |
-| tenere uno step + PRESETS | nota dello step (semitoni) |
+| tenere uno step + PRESETS | nota dello step (sul KIT: l'intonazione della voce, come lock) |
 | tenere uno step + ALGORITHM | ottava della nota dello step |
-| tasti neri 1–6 | seleziona la traccia 1–6 |
-| nero **MUT** | tap: muta/attiva la traccia selezionata; tenuto + tasto traccia: muta quella traccia |
-| nero **ACC** tenuto + step | accent on/off |
-| nero **SLD** tenuto + step | slide (legato con glide) on/off |
-| nero **CPY** | copia la traccia (suono + step + lock) |
-| nero **PST** | tap: incolla step, note e lock; tenuto: incolla anche il suono |
-| CPY tenuto + PST | cancella la traccia |
+| tasto nero | sceglie quella voce del KIT (e la suona, se il sequencer è fermo): la traccia diventa il KIT e i tasti bianchi mostrano gli step di quella voce |
 | OCT− / OCT+ | pagina di step (1–16, 17–32, …) per pattern più lunghi di 16 |
 
-I LED: step con trig accesi, step con soli lock in luce tenue, lo step in esecuzione invertito; tasti
-neri: traccia selezionata accesa, tracce attive in luce tenue, tracce mute spente.
+**SEQ tenuto = shift.** Tenendo SEQ i tasti neri tornano a fare quello che facevano prima (lo schermo
+mostra le etichette in basso). Rilasciato da solo, SEQ passa da GRID a KEYS; se l'hai usato come shift,
+no.
 
-**KEYS** (SEQ spento): tutti i 27 tasti suonano la traccia selezionata in cromatico (da F),
+| SEQ tenuto + | Effetto |
+| --- | --- |
+| neri 1–6 | seleziona la traccia 1–6 (anche SELECT lo fa) |
+| **MUT** | tap: muta/attiva la traccia selezionata; tenuto + nero 1–6: muta quella traccia |
+| **ACC** tenuto + step | accent on/off |
+| **SLD** tenuto + step | slide on/off (non sul KIT) |
+| **CPY** | copia la traccia (suono + step + lock; sul KIT tutte le voci) |
+| **PST** | tap: incolla step e lock; tenuto: incolla anche il suono |
+| **CPY** tenuto + **PST** | cancella la traccia |
+
+I LED: step con trig accesi, step con soli lock in luce tenue, lo step in esecuzione invertito; tasti
+neri: la voce scelta accesa, le voci con degli step in luce tenue, un colpo lampeggia.
+
+**KEYS** (SEQ spento): sul KIT i tasti neri sono **pad** (le 11 voci) e i bianchi suonano la voce scelta
+intonata, come una tastiera; con REC i colpi finiscono sugli step. Su un synth tutti i 27 tasti suonano
+la traccia selezionata in cromatico (da F),
 OCT−/OCT+ cambiano ottava (±3). Con l'arpeggiatore attivo i tasti tenuti vengono arpeggiati. I LED
 mostrano la scala del pattern (pagina HOME, seconda riga): tonica accesa, note della scala in luce
 tenue, note fuori scala spente; con **SNAP** un tasto fuori scala suona la nota della scala più vicina.
@@ -130,6 +141,30 @@ Velocità LFO: `SPD × MULT = 128` fa un ciclo ogni 16 step (una battuta a 1x).
 Tutti i parametri di tutte le pagine si possono lockare per step e modulare con gli LFO (DEST copre
 SYN, AMP, FILT, FX e i parametri degli LFO; la pagina TRK si può lockare ma non modulare).
 
+## Il KIT (traccia 1)
+
+Undici voci di batteria, una per tasto nero, ognuna una drum machine a sé con i suoi 16 valori e la sua
+riga di step (con accent e lock). Di fabbrica: BD, SD, CP, HC, HO (choke insieme), tre tom, RM, CB e una
+BD lunga stile 808.
+
+| Pagina | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **SYN** (VOICE) | TYPE (BD SD HH CL HH OP CLAP TOM RIM BELL; anche ALGORITHM) | TUNE | DCAY decadimento | TONE | PDEC decadimento pitch | PAMT quantità pitch | NOIS rumore | SNAP click |
+| **TRK** (MIX) | LEVL livello | PAN | DSND mandata al delay | PROB probabilità | ACNT forza dell'accent | CHOK gruppo di choke (OFF, A, B, C) | RTRG ratchet ×1–×4 nello step | MUTE la voce |
+
+Le pagine SYN e TRK mostrano la voce scelta (in alto c'è la fila delle 11 voci). Le altre pagine sono
+quelle della traccia e valgono per tutto il KIT, in stereo: filtri, distorsione, EQ, riduzione
+sample-rate, volume, pan e il tempo/feedback del delay (le mandate sono per voce). AMP ATK/HOLD/DEC/REL,
+PORT e FX DSND non servono (le voci hanno i loro inviluppi) e compaiono come `--`. Gli LFO del KIT che
+puntano alla pagina SYN modulano quel valore su tutte le voci.
+
+Per la CPU suonano al massimo 6 voci alla volta: con la settima, la più debole si spegne in 8 ms.
+Il caso più pesante del firmware è un KIT con molte voci lunghe insieme a cinque synth carichi: controlla
+GLO → CPU sul dispositivo.
+
+STEP REC sul KIT: i pad si sommano sullo stesso step; **FX** (NEXT) passa allo step dopo, **EDIT**
+torna indietro, **ENV** mette l'accent sul colpo seguente.
+
 ## Le macchine
 
 Per tutte le macchine il valore 1 è **TUNE** (semitoni, ±64); dove c'è, il 2 è **FINE** (±1 semitono).
@@ -165,7 +200,7 @@ scegliendo un'altra macchina). La nota suonata traspone il suono rispetto al C4.
 
 **1. STEP REC: una nota per step, avanzando da solo** (il modo per bassi e melodie).
 
-1. Scegli la traccia (SELECT o, in GRID, un tasto nero 1–6).
+1. Scegli la traccia (SELECT, o SEQ tenuto + un tasto nero 1–6).
 2. **SEQ** per passare in KEYS, poi **REC** a sequencer fermo: in basso compare il badge rosso
    **STEP REC**, sullo step 1 lampeggia il cursore e lo schermo mostra il piano-roll della traccia.
 3. Ogni tasto scrive la sua nota sullo step del cursore e passa al successivo. I cinque pulsanti sopra
@@ -189,7 +224,7 @@ puoi sbagliare nota.
 
 **2. GRID: step per step, a mano.** Tap su uno step per accenderlo (usa l'ultima nota suonata sulla
 traccia). Tieni lo step e gira **PRESETS** per la nota (dentro la scala del pattern, se ne hai scelta
-una) e **ALGORITHM** per l'ottava. **ACC** / **SLD** tenuti + step: accent / slide. Il piano-roll negli
+una) e **ALGORITHM** per l'ottava. **SEQ** + **ACC** / **SLD** tenuti + step: accent / slide. Il piano-roll negli
 step in basso mostra l'altezza delle note.
 
 **3. REC dal vivo.** In KEYS, **PLAY** e **REC**: suona e le note finiscono sullo step più vicino (un
@@ -235,7 +270,7 @@ che suona lampeggia, la manopola appena girata illumina il suo valore.
 
 ## Pattern, kit e salvataggio
 
-- 32 slot, A01–B16. Al primo avvio A01 contiene una **demo** (cassa, rullante, hi-hat, basso con
+- 16 slot, A01–A16. Al primo avvio A01 contiene una **demo** (il KIT, un basso ACID con
   slide e accent, stab FM con un lock, pad ENS con LFO sul filtro); gli altri slot partono con lo
   stesso kit e il pattern vuoto.
 - **PRESETS** cambia slot (da fermo: caricato quando smetti di girare; mentre suona: alla fine del
@@ -252,11 +287,11 @@ USB-MIDI e ingresso MIDI TRS.
 | Messaggio | Effetto |
 | --- | --- |
 | Note on/off sul canale **AUTO** (default 1) | suonano la traccia selezionata (registrate con REC) |
-| Note sui canali traccia (default 2–7) | suonano le tracce 1–6 |
+| Note sui canali traccia (default 2–7) | suonano le tracce 1–6; sul canale della traccia 1 le note GM di batteria suonano le voci del KIT (36 BD, 38 SD, 39 CP, 42 HC, 46 HO, 41/45/48 tom, 37 RM, 56 CB, 35 BD lunga), anche registrate con REC |
 | CC 16–79 sul canale di una traccia | i suoi 64 valori in ordine (CC 16 + pagina × 8 + posizione), scalati sul range; tranne il 64 (pedale sustain, ignorato) |
 | CC 7 / CC 10 | volume / pan della traccia |
 | CC 120 / 123 | tutte le note off |
-| Program change sul canale AUTO | slot 0–31 |
+| Program change sul canale AUTO | slot 0–15 |
 | Clock, Start, Continue, Stop | sync del sequencer (se CLK IN è ON) |
 | Uscita (MIDI OUT ON) | le note del sequencer e dei tasti sui canali traccia; clock e start/stop se CLK OUT è ON |
 

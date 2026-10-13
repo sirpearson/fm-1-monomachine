@@ -4,8 +4,9 @@ expect slot 0
 expect view 0
 expect playing 0
 shot boot.png
-expect trig0_0 1
-expect machine0 7
+expect kv0_0 1
+expect machine0 12
+expect machine1 11
 tap PLAY
 wav demo.wav
 wait 1200

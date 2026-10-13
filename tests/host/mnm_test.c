@@ -105,6 +105,7 @@ static void fresh(void)
     mn_init();
     mn_song_init(&song);
     mn_pat_clear(&song.pat);
+    mn_track_init(&song.kit, 0, MC_SINE);       /* (the generic tests play a synth on track 1, not the kit) */
     mn_set_song(&song);
     mn_tempo10 = 1200;
     mn_mute = 0;
@@ -124,6 +125,8 @@ int main(int argc, char **argv)
     /* ---- every machine, alone on track 1: a few notes up the keyboard */
     for (m = 0; m < MC_N; m++) {
         char name[64], what[96];
+        if (m == MC_KIT)
+            continue;                                /* (the kit: its own tests, below) */
         float pmax = 0.0f;
         int bad = 0;
         fresh();
@@ -466,8 +469,97 @@ int main(int argc, char **argv)
     song.format = 1u;
     song.pat.root = 7;
     ok(mn_song_load_size(&song, (int)MN_SONG_SIZE_V1) && song.format == MN_SONG_FORMAT && song.pat.root == 0 &&
-       song.pat.trig[0][0] == MN_TRIG, "a song of format 1 loads, without a scale");
+       (song.pat.trig[1][0] & MN_TRIG), "a song of format 1 loads, without a scale");
     ok(!mn_song_load_size(&song, 100), "a short song does not");
+
+    /* the KIT: eleven voices, each on its own steps, with locks, choke, ratchet, mute and probability */
+    {
+        int v, n;
+        uint8_t c0[MN_NKV];
+        fresh();
+        mn_track_init(&song.kit, 0, MC_KIT);
+        for (v = 0; v < MN_NKV; v++) {
+            char what[48];
+            float pk;
+            mn_kit_hit(v, 100, 0);
+            pk = run(250, 0);
+            snprintf(what, sizeof what, "KIT voice %d (%s) sounds: %.2f", v + 1, mn_kv_name(song.drums.par[v][KV_TYPE]), (double)pk);
+            ok(pk > 0.02f && pk < 0.99f, what);
+        }
+        run(2000, 0);
+        for (v = 0; v < MN_NKV; v++)
+            c0[v] = mn_kv_count[v];
+        mn_kv_put(&song.drums, 0, 0, MN_TRIG);
+        mn_kv_put(&song.drums, 0, 8, MN_TRIG | MN_ACC);
+        mn_kv_put(&song.drums, 3, 2, MN_TRIG);
+        mn_kv_put(&song.drums, 3, 6, MN_TRIG);
+        mn_kv_put(&song.drums, 5, 4, MN_TRIG);
+        song.drums.par[5][KV_RTRG] = 3;              /* x4 */
+        ok(mn_kv_get(&song.drums, 0, 8) == (MN_TRIG | MN_ACC) && mn_kv_get(&song.drums, 0, 9) == 0 &&
+           mn_kv_any(&song.drums, 2) && !mn_kv_any(&song.drums, 3), "KIT steps: set, read, accent, any");
+        mn_play(1);
+        run(1990, 0);
+        mn_play(0);
+        ok((uint8_t)(mn_kv_count[0] - c0[0]) == 2 && (uint8_t)(mn_kv_count[3] - c0[3]) == 2,
+           "KIT: each voice plays its own steps");
+        ok((uint8_t)(mn_kv_count[5] - c0[5]) == 4, "KIT: a ratchet x4 hits four times in its step");
+        /* a voice's lock: the step's kick much quieter */
+        fresh();
+        mn_track_init(&song.kit, 0, MC_KIT);
+        mn_kv_put(&song.drums, 0, 0, MN_TRIG);
+        mn_kv_put(&song.drums, 0, 4, MN_TRIG);
+        ok(mn_lock_set(&song.pat, 0, MN_KVPAR(0, KV_LEVL), 4, 20) == 0, "KIT: a lock on a voice's value");
+        mn_play(1);
+        {
+            float a = run(300, 0), b;
+            run(200, 0);
+            b = run(300, 0);
+            ok(b < a * 0.2f, "KIT: the locked step is quieter");
+        }
+        mn_play(0);
+        /* mute (the voice's) and probability */
+        mn_lock_clear_track(&song.pat, 0);
+        song.drums.par[0][KV_MUTE] = 1;
+        c0[0] = mn_kv_count[0];
+        mn_play(1);
+        run(1000, 0);
+        mn_play(0);
+        ok(mn_kv_count[0] == c0[0], "KIT: a muted voice plays nothing");
+        song.drums.par[0][KV_MUTE] = 0;
+        song.drums.par[0][KV_PROB] = 64;
+        for (n = 0; n < 16; n++)
+            mn_kv_put(&song.drums, 0, n, MN_TRIG);
+        c0[0] = mn_kv_count[0];
+        mn_play(1);
+        run(8000, 0);
+        mn_play(0);
+        n = (uint8_t)(mn_kv_count[0] - c0[0]);
+        ok(n > 20 && n < 44, "KIT: probability 50 % plays about half");
+        /* choke: the closed hat stops the open one */
+        fresh();
+        mn_track_init(&song.kit, 0, MC_KIT);
+        mn_kit_hit(4, 100, 0);
+        run(60, 0);
+        mn_kit_hit(3, 1, 0);                          /* (as quiet as can be: what is left is the open hat) */
+        run(40, 0);
+        ok(run(100, 0) < 0.01f, "KIT: the closed hat chokes the open one");
+        /* MIDI notes on the kit: GM drums */
+        ok(mn_kv_of_note(36) == 0 && mn_kv_of_note(42) == 3 && mn_kv_of_note(60) == -1 && mn_kv_note(1) == 38,
+           "KIT: GM notes");
+        c0[1] = mn_kv_count[1];
+        mn_note_on(0, 38, 100);
+        run(20, 0);
+        ok((uint8_t)(mn_kv_count[1] - c0[1]) == 1, "KIT: a note on track 1 plays its voice");
+    }
+    /* a song of format 2 (0.2): track 1's DRUM goes into the kit */
+    mn_song_init(&song);
+    mn_track_init(&song.kit, 0, MC_DRUM);
+    song.kit.par[0][1] = 1;                          /* a snare */
+    song.pat.trig[0][4] = MN_TRIG;
+    song.format = 2u;
+    ok(mn_song_load_size(&song, (int)MN_SONG_SIZE_V2) && song.kit.machine[0] == MC_KIT &&
+       mn_kv_get(&song.drums, 1, 4) == MN_TRIG, "a song of format 2 loads: its drum track into the kit's snare");
+    ok(sizeof(mn_song_t) <= 3840u, "a song with its kit fits a flash object");
 
     /* the demo, 4 bars, to listen to */
     fresh();

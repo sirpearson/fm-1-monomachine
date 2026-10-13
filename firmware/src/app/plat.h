@@ -39,10 +39,10 @@ void plat_midi_out(uint32_t pkt);      /* queue one (audio ISR or main loop) */
 int plat_store_load(uint32_t obj, void *dst, uint32_t max);   /* bytes loaded, < 0 = none / bad */
 int plat_store_save(uint32_t obj, const void *src, uint32_t len);   /* 0 = ok */
 #define PLAT_STORE_MAX 3840u           /* bytes per object */
-#define PLAT_NPATSLOT 32u             /* pattern slots (a pattern and its kit each) */
+#define PLAT_NPATSLOT 16u             /* pattern slots (a pattern and its kit each) */
 enum { OBJ_PROJ, OBJ_PANEL, OBJ_PAT0, OBJ_NOBJ = OBJ_PAT0 + PLAT_NPATSLOT };
-/* flash: OBJ_PROJ 0xFC000, OBJ_PANEL 0xDC000, pattern slot i at 0x97000 + i * 0x2000 (up to 0xD6FFF)
- * (2 sectors each, inside Felucca's data area) */
+/* flash: OBJ_PROJ 0xFC000, OBJ_PANEL 0xDC000, pattern slot i at 0x97000 + i * 0x2000 (up to 0xB6FFF)
+ * (2 sectors each, inside Felucca's data area). 0xB7000..0xDBFFF (148 KiB) is kept for samples. */
 
 /* audio load in % of the render budget, and xruns since boot (device: from the ISR) */
 uint32_t plat_cpu_pct(void);

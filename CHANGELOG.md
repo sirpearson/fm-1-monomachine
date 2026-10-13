@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- The KIT: track 1 is a drum kit of eleven voices, one per black key, each with its own sixteen values
+  (type, tune, decay, tone, pitch envelope, noise, click; level, pan, delay send, probability, accent,
+  choke group, ratchet, mute), its own steps with accents, and locks; through the track's strip in
+  stereo. At most six voices sound at once.
+- The black keys pick a voice (GRID) or play it as a pad (KEYS); the white keys are then its steps.
+  The tracks and the tools (MUT ACC SLD CPY PST) moved to SEQ held + a black key.
+- MIDI: GM drum notes on track 1's channel play the kit's voices.
+- The default kit: KIT, ACID, FM, ENS, WAVE, PLUK; the demo uses the kit.
+- 16 pattern slots (A01-A16): 148 KB of flash kept for the sampler to come.
+- Songs of 0.1 and 0.2 still load: a DRUM on track 1 goes into the kit's voice of its type.
+
 ## 0.2.0
 
 - ACID: a TB-303 style bass machine (saw / square, a resonant four-pole filter, the accent and its

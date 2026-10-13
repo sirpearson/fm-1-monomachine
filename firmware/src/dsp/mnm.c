@@ -70,7 +70,13 @@ static const machine_t MACH[MC_N] = {
                                {"SUB", 127, 0, PK_NUM}, {"OCT2", 127, 0, PK_NUM}, {"PDEC", 127, 30, PK_NUM}, {"PAMT", 127, 0, PK_NUM}}},
     {"ACID", "Acid bass", 0, {TUNE, {"WAVE", 1, 0, PK_ENUM}, {"CUT", 127, 36, PK_NUM}, {"RES", 127, 88, PK_NUM},
                               {"ENV", 127, 72, PK_NUM}, {"DEC", 127, 56, PK_NUM}, {"ACC", 127, 90, PK_NUM}, {"DRIV", 127, 24, PK_NUM}}},
+#define KV_SYN {"TYPE", 7, 0, PK_ENUM}, {"TUNE", 127, 64, PK_BIP}, {"DCAY", 127, 64, PK_NUM}, {"TONE", 127, 64, PK_NUM}, \
+               {"PDEC", 127, 40, PK_NUM}, {"PAMT", 127, 60, PK_NUM}, {"NOIS", 127, 40, PK_NUM}, {"SNAP", 127, 40, PK_NUM}
+    {"KIT", "Drum kit", 0, {KV_SYN}},                 /* (its SYN page: the voice selected's; LFOs: every voice's) */
 };
+static const mn_pinfo_t KV_INFO[MN_KVP] = {KV_SYN,
+    {"LEVL", 127, 100, PK_NUM}, {"PAN", 127, 64, PK_BIP}, {"DSND", 127, 0, PK_NUM}, {"PROB", 127, 127, PK_SPECIAL},
+    {"ACNT", 127, 64, PK_NUM}, {"CHOK", 3, 0, PK_SPECIAL}, {"RTRG", 3, 0, PK_SPECIAL}, {"MUTE", 1, 0, PK_ENUM}};
 
 const char *mn_machine_name(int m) { return MACH[(unsigned)m < MC_N ? m : 0].name; }
 const char *mn_machine_long(int m) { return MACH[(unsigned)m < MC_N ? m : 0].longname; }
@@ -147,6 +153,7 @@ void mn_par_text(int machine, int p, int v, char *b)
             case MC_FMDYN: s = RATIO_NAME[v % 24]; break;
             case MC_DRUM: s = DRUM_NAME[v & 7]; break;
             case MC_ACID: s = v ? "SQR" : "SAW"; break;
+            case MC_KIT: s = DRUM_NAME[v & 7]; break;
             default: break;
             }
         } else if (p >= P_LFO1 && p < P_ARPM) {
@@ -256,6 +263,94 @@ void mn_dest_text(const uint8_t *machines, int self, int trk, int dest, char *b)
     s_cpy(b, mn_par_info(machines[t % MN_NT], dest - 1)->name);
 }
 
+/* ---- the drum kit's values */
+const mn_pinfo_t *mn_kv_info(int p) { return &KV_INFO[(unsigned)p < MN_KVP ? p : 0]; }
+static const char *const KV_SHORT[8] = {"BD", "SD", "HC", "HO", "CP", "TM", "RM", "CB"};
+const char *mn_kv_name(int type) { return KV_SHORT[type & 7]; }
+static const uint8_t KV_NOTE[MN_NKV] = {36, 38, 39, 42, 46, 41, 45, 48, 37, 56, 35};   /* GM drums */
+int mn_kv_note(int v) { return KV_NOTE[(unsigned)v % MN_NKV]; }
+int mn_kv_of_note(int note)
+{
+    int v;
+    for (v = 0; v < MN_NKV; v++)
+        if (KV_NOTE[v] == note)
+            return v;
+    return -1;
+}
+void mn_kv_text(int p, int v, char *b)
+{
+    static const char *const CHOKE[4] = {"OFF", "A", "B", "C"};
+    switch (p) {
+    case KV_TYPE: s_cpy(b, DRUM_NAME[v & 7]); return;
+    case KV_PROB: b = itoa_s((v * 100 + 63) / 127, b); s_cpy(b, "%"); return;
+    case KV_CHOK: s_cpy(b, CHOKE[v & 3]); return;
+    case KV_RTRG: *b++ = 'x'; itoa_s((v & 3) + 1, b); return;
+    case KV_MUTE: s_cpy(b, v ? "ON" : "OFF"); return;
+    case KV_TUNE: case KV_PAN:
+        if (v > 64)
+            *b++ = '+';
+        itoa_s(v - 64, b);
+        return;
+    default: itoa_s(v, b); return;
+    }
+}
+
+/* the eleven voices: kick, snare, clap, closed and open hat (one choke group), three toms, rim, bell, a long
+ * low kick (an 808's boom) */
+static const uint8_t KV_DEF[MN_NKV][MN_KVP] = {
+    /* TYPE TUNE DCAY TONE PDEC PAMT NOIS SNAP LEVL PAN DSND PROB ACNT CHOK RTRG MUTE */
+    {0, 64, 62, 40, 34, 72, 10, 50, 116, 64, 0, 127, 64, 0, 0, 0},
+    {1, 64, 52, 76, 28, 40, 92, 50, 100, 64, 10, 127, 64, 0, 0, 0},
+    {4, 64, 50, 64, 40, 0, 40, 0, 96, 60, 20, 127, 64, 0, 0, 0},
+    {2, 64, 40, 84, 40, 0, 50, 20, 82, 78, 0, 127, 80, 1, 0, 0},
+    {3, 64, 60, 84, 40, 0, 50, 20, 74, 78, 0, 127, 64, 1, 0, 0},
+    {5, 57, 62, 40, 40, 50, 20, 30, 96, 46, 0, 127, 64, 0, 0, 0},
+    {5, 64, 58, 40, 40, 50, 20, 30, 92, 64, 0, 127, 64, 0, 0, 0},
+    {5, 71, 54, 40, 40, 50, 20, 30, 90, 82, 0, 127, 64, 0, 0, 0},
+    {6, 64, 40, 64, 40, 40, 0, 30, 88, 54, 10, 127, 64, 0, 0, 0},
+    {7, 64, 50, 64, 40, 0, 20, 10, 72, 74, 30, 127, 64, 0, 0, 0},
+    {0, 59, 112, 70, 20, 40, 0, 10, 110, 64, 0, 127, 64, 0, 0, 0},
+};
+void mn_drums_clear(mn_drums_t *d)
+{
+    int v, i;
+    for (v = 0; v < MN_NKV; v++)
+        for (i = 0; i < MN_NSTEP / 8; i++)
+            d->trig[v][i] = d->acc[v][i] = 0;
+}
+void mn_drums_init(mn_drums_t *d)
+{
+    int v, p;
+    for (v = 0; v < MN_NKV; v++)
+        for (p = 0; p < MN_KVP; p++)
+            d->par[v][p] = KV_DEF[v][p];
+    mn_drums_clear(d);
+}
+int mn_kv_get(const mn_drums_t *d, int v, int step)
+{
+    int i = (step & (MN_NSTEP - 1)) >> 3, b = step & 7;
+    if ((unsigned)v >= MN_NKV || !(d->trig[v][i] >> b & 1))
+        return 0;
+    return (int)(MN_TRIG | ((d->acc[v][i] >> b & 1) ? MN_ACC : 0u));
+}
+void mn_kv_put(mn_drums_t *d, int v, int step, int f)
+{
+    int i = (step & (MN_NSTEP - 1)) >> 3;
+    uint8_t m = (uint8_t)(1u << (step & 7));
+    if ((unsigned)v >= MN_NKV)
+        return;
+    d->trig[v][i] = (uint8_t)((f & MN_TRIG) ? d->trig[v][i] | m : d->trig[v][i] & ~m);
+    d->acc[v][i] = (uint8_t)((f & MN_TRIG) && (f & MN_ACC) ? d->acc[v][i] | m : d->acc[v][i] & ~m);
+}
+int mn_kv_any(const mn_drums_t *d, int step)
+{
+    int v, i = (step & (MN_NSTEP - 1)) >> 3, b = step & 7;
+    for (v = 0; v < MN_NKV; v++)
+        if (d->trig[v][i] >> b & 1)
+            return 1;
+    return 0;
+}
+
 /* ================================================================== songs === */
 static void track_defaults(mn_kit_t *k, int t)
 {
@@ -286,29 +381,29 @@ void mn_track_init(mn_kit_t *k, int t, int m)
         k->par[t][P_REL] = 12;
 }
 
-/* the kit every new slot starts with: three drums, a bass, an FM voice and a pad */
+/* the kit every new slot starts with: the drum kit, an acid bass, an FM voice, a pad, a lead, a pluck */
 void mn_kit_init(mn_kit_t *k)
 {
     uint8_t *p;
-    mn_track_init(k, 0, MC_DRUM);
+    mn_track_init(k, 0, MC_KIT);
     p = k->par[0];
-    p[1] = 0, p[2] = 34, p[3] = 72, p[4] = 10, p[5] = 50, p[6] = 40, p[7] = 62, p[P_VOL] = 116;
-    mn_track_init(k, 1, MC_DRUM);
+    p[P_VOL] = 112, p[P_DTIM] = 23, p[P_DFB] = 44;
+    mn_track_init(k, 1, MC_ACID);
     p = k->par[1];
-    p[1] = 1, p[2] = 28, p[3] = 40, p[4] = 92, p[5] = 50, p[6] = 76, p[7] = 52, p[P_VOL] = 96;
-    p[P_DSND] = 20, p[P_DTIM] = 23, p[P_DFB] = 40;
-    mn_track_init(k, 2, MC_DRUM);
-    p = k->par[2];
-    p[1] = 2, p[4] = 50, p[6] = 84, p[7] = 40, p[P_VOL] = 78, p[P_PAN] = 76;
-    mn_track_init(k, 3, MC_ACID);
-    p = k->par[3];
     p[P_REL] = 12, p[P_VOL] = 92, p[P_GATE] = 9, p[P_ACNT] = 70, p[P_DSND] = 14, p[P_DTIM] = 23, p[P_DFB] = 40;
-    mn_track_init(k, 4, MC_FM);
-    p = k->par[4];
+    mn_track_init(k, 2, MC_FM);
+    p = k->par[2];
     p[2] = 8, p[3] = 52, p[4] = 6, p[5] = 20, p[P_HOLD] = 0, p[P_DEC] = 70, p[P_REL] = 50;
     p[P_DSND] = 60, p[P_DTIM] = 23, p[P_DFB] = 64, p[P_PAN] = 44, p[P_VOL] = 80;
-    mn_track_init(k, 5, MC_ENS);
+    mn_track_init(k, 4, MC_WAVE);
+    p = k->par[4];
+    p[2] = 40, p[3] = 90, p[P_REL] = 40, p[P_WDTH] = 80, p[P_LPQ] = 30, p[P_VOL] = 76, p[P_PAN] = 56;
+    p[P_DSND] = 40, p[P_DTIM] = 23, p[P_DFB] = 56;
+    mn_track_init(k, 5, MC_PLUCK);
     p = k->par[5];
+    p[P_HOLD] = 0, p[P_DEC] = 127, p[P_REL] = 90, p[P_VOL] = 84, p[P_PAN] = 74, p[P_DSND] = 36, p[P_DTIM] = 31, p[P_DFB] = 50;
+    mn_track_init(k, 3, MC_ENS);
+    p = k->par[3];
     p[2] = 6, p[4] = 40, p[5] = 40, p[P_ATK] = 70, p[P_REL] = 84, p[P_WDTH] = 92, p[P_VOL] = 70, p[P_PAN] = 84;
     p[P_LFO1 + L_DEST] = P_WDTH + 1, p[P_LFO1 + L_SPD] = 16, p[P_LFO1 + L_DPTH] = 84;
     p[P_DSND] = 30, p[P_DTIM] = 31, p[P_DFB] = 60, p[P_GATE] = 127;
@@ -345,6 +440,7 @@ void mn_song_init(mn_song_t *s)
     s->format = MN_SONG_FORMAT;
     mn_kit_init(&s->kit);
     mn_pat_clear(&s->pat);
+    mn_drums_init(&s->drums);
 }
 
 void mn_song_demo(mn_song_t *s)
@@ -352,28 +448,35 @@ void mn_song_demo(mn_song_t *s)
     static const uint8_t BASS[16] = {36, 36, 48, 36, 0, 39, 36, 0, 41, 43, 36, 48, 0, 46, 43, 39};
     static const uint8_t BFL[16] = {MN_ACC, 0, MN_SLIDE, 0, 0, MN_ACC, 0, 0, 0, MN_SLIDE, MN_ACC, MN_SLIDE, 0, MN_ACC, 0, MN_SLIDE};
     mn_pat_t *p = &s->pat;
+    mn_drums_t *d = &s->drums;
     int i;
     mn_song_init(s);
+    /* the kit: kick, snare and clap, the hats (the open one chokes the closed), a rim, a ghost snare */
     for (i = 0; i < 16; i += 4)
-        p->trig[0][i] = MN_TRIG;
-    p->trig[1][4] = p->trig[1][12] = MN_TRIG;
-    p->trig[1][15] = MN_TRIG;
-    mn_lock_set(p, 1, P_VOL, 15, 50);                 /* a ghost note: a lock */
-    for (i = 2; i < 16; i += 4)
-        p->trig[2][i] = MN_TRIG | MN_ACC;
-    p->trig[2][7] = p->trig[2][13] = MN_TRIG;
+        mn_kv_put(d, 0, i, MN_TRIG);
+    mn_kv_put(d, 1, 4, MN_TRIG);
+    mn_kv_put(d, 1, 12, MN_TRIG);
+    mn_kv_put(d, 2, 12, MN_TRIG);
+    mn_kv_put(d, 1, 15, MN_TRIG);
+    mn_lock_set(p, 0, MN_KVPAR(1, KV_LEVL), 15, 50);   /* the ghost note: a lock on the snare's level */
+    for (i = 2; i < 14; i += 4)
+        mn_kv_put(d, 3, i, MN_TRIG | MN_ACC);
+    mn_kv_put(d, 3, 7, MN_TRIG);
+    mn_kv_put(d, 3, 13, MN_TRIG);
+    mn_kv_put(d, 4, 14, MN_TRIG);
+    mn_kv_put(d, 8, 11, MN_TRIG);
     for (i = 0; i < 16; i++)
         if (BASS[i]) {
-            p->trig[3][i] = (uint8_t)(MN_TRIG | BFL[i]);
-            p->note[3][i] = BASS[i];
+            p->trig[1][i] = (uint8_t)(MN_TRIG | BFL[i]);
+            p->note[1][i] = BASS[i];
         }
-    p->trig[4][3] = p->trig[4][11] = MN_TRIG;
-    p->note[4][3] = 72;
-    p->note[4][11] = 75;
-    mn_lock_set(p, 4, 2, 11, 10);                      /* RAT1 x3: another colour, one step */
-    p->trig[5][0] = p->trig[5][8] = MN_TRIG;
-    p->note[5][0] = 60;
-    p->note[5][8] = 56;
+    p->trig[2][3] = p->trig[2][11] = MN_TRIG;
+    p->note[2][3] = 72;
+    p->note[2][11] = 75;
+    mn_lock_set(p, 2, 2, 11, 10);                      /* RAT1 x3: another colour, one step */
+    p->trig[3][0] = p->trig[3][8] = MN_TRIG;
+    p->note[3][0] = 60;
+    p->note[3][8] = 56;
     p->swing = 54;
     p->root = 0;                                       /* C minor: the bass line's */
     p->scale = 2;
@@ -384,8 +487,10 @@ int mn_song_valid(mn_song_t *s)
     int t, p, i, r;
     if (s->magic != MN_SONG_MAGIC || s->format < 1u || s->format > MN_SONG_FORMAT)
         return 0;
+    if (s->kit.machine[MN_KIT_TRACK] != MC_KIT)
+        mn_track_init(&s->kit, MN_KIT_TRACK, MC_KIT);
     for (t = 0; t < MN_NT; t++) {
-        if (s->kit.machine[t] >= MC_N)
+        if (s->kit.machine[t] >= MC_N || (t != MN_KIT_TRACK && s->kit.machine[t] == MC_KIT))
             mn_track_init(&s->kit, t, MC_SAW);
         for (p = 0; p < MN_NP; p++)
             if (s->kit.par[t][p] > mn_par_info(s->kit.machine[t], p)->max)
@@ -397,8 +502,13 @@ int mn_song_valid(mn_song_t *s)
         }
     }
     for (r = 0; r < MN_NLOCK; r++)
-        if (s->pat.ltrk[r] != 0xFF && (s->pat.ltrk[r] >= MN_NT || s->pat.lpar[r] >= MN_NP))
+        if (s->pat.ltrk[r] != 0xFF && (s->pat.ltrk[r] >= MN_NT ||
+                                       s->pat.lpar[r] >= (s->pat.ltrk[r] == MN_KIT_TRACK ? MN_KVPAR(MN_NKV, 0) : MN_NP)))
             s->pat.ltrk[r] = 0xFF;
+    for (t = 0; t < MN_NKV; t++)
+        for (p = 0; p < MN_KVP; p++)
+            if (s->drums.par[t][p] > KV_INFO[p].max)
+                s->drums.par[t][p] = KV_DEF[t][p];
     if (s->pat.len < 1 || s->pat.len > MN_NSTEP)
         s->pat.len = 16;
     if (s->pat.speed >= MN_NSPEED)
@@ -413,13 +523,34 @@ int mn_song_valid(mn_song_t *s)
     return 1;
 }
 
+/* an older song: its drums made (track 1, if it was a DRUM, goes into the kit's voice of its type) */
+static void song_upgrade(mn_song_t *s)
+{
+    static const uint8_t TYPE_VOICE[8] = {0, 1, 3, 4, 2, 5, 8, 9};
+    int i;
+    mn_drums_init(&s->drums);
+    if (s->kit.machine[0] == MC_DRUM) {
+        int v = TYPE_VOICE[s->kit.par[0][1] & 7];
+        for (i = 0; i < MN_NSTEP; i++)
+            if (s->pat.trig[0][i] & MN_TRIG)
+                mn_kv_put(&s->drums, v, i, s->pat.trig[0][i]);
+    }
+    mn_lock_clear_track(&s->pat, 0);
+    s->format = MN_SONG_FORMAT;
+}
 int mn_song_load_size(mn_song_t *s, int bytes)
 {
+    if (s->magic != MN_SONG_MAGIC)
+        return 0;
     if (bytes == (int)sizeof *s && s->format == MN_SONG_FORMAT)
         return mn_song_valid(s);
-    if (bytes == (int)MN_SONG_SIZE_V1 && s->format == 1u && s->magic == MN_SONG_MAGIC) {
+    if (bytes == (int)MN_SONG_SIZE_V2 && s->format == 2u) {
+        song_upgrade(s);
+        return mn_song_valid(s);
+    }
+    if (bytes == (int)MN_SONG_SIZE_V1 && s->format == 1u) {
         s->pat.root = s->pat.scale = s->pat.snap = s->pat.rsv2 = 0;   /* (the bytes after the old song) */
-        s->format = MN_SONG_FORMAT;
+        song_upgrade(s);
         return mn_song_valid(s);
     }
     return 0;
@@ -518,6 +649,15 @@ void mn_lock_clear_step(mn_pat_t *p, int t, int step)
         }
 }
 
+void mn_lock_clear(mn_pat_t *p, int t, int par, int step)
+{
+    int r = lock_row(p, t, par);
+    if (r >= 0) {
+        p->lval[r][step & (MN_NSTEP - 1)] = 0xFF;
+        row_free_if_empty(p, r);
+    }
+}
+
 void mn_lock_clear_track(mn_pat_t *p, int t)
 {
     int r;
@@ -543,7 +683,7 @@ int mn_lock_rows_free(const mn_pat_t *p)
 }
 
 /* =============================================================== commands === */
-enum { C_PLAY, C_NOTEON, C_NOTEOFF, C_ALLOFF, C_PANIC, C_CLOCK, C_SONG, C_QUEUE };
+enum { C_PLAY, C_NOTEON, C_NOTEOFF, C_ALLOFF, C_PANIC, C_CLOCK, C_SONG, C_QUEUE, C_KITHIT };
 typedef struct {
     uint8_t c, t;
     int16_t a, b;
@@ -577,6 +717,7 @@ void mn_note_off(int t, int note) { post(C_NOTEOFF, clampi(t, 0, MN_NT - 1), cla
 void mn_all_off(void) { post(C_ALLOFF, 0, 0, 0, 0); }
 void mn_panic(void) { post(C_PANIC, 0, 0, 0, 0); }
 void mn_clock(int msg) { post(C_CLOCK, 0, msg, 0, 0); }
+void mn_kit_hit(int v, int vel, int semis) { post(C_KITHIT, clampi(v, 0, MN_NKV - 1), clampi(vel, 1, 127), clampi(semis, -48, 48), 0); }
 
 /* the song pointers: written here (and by the commands, for the render's own view) */
 static mn_song_t *volatile cur, *volatile queued;
@@ -618,6 +759,14 @@ static float wt[WT_K][WT_N + 1] MN_POOL;               /* (+1: the first sample 
 static int16_t dly_buf[MN_NT][DLY_N] MN_POOL;
 static float plk_buf[MN_NT][PLK_N] MN_POOL;
 
+/* one drum voice: the DRUM machine's, and each of the KIT's eleven (drum_set, drum_run) */
+typedef struct {
+    float ph[6], a0, a1, lp, bp, env, nenv, pe;
+    float tr, pdk, pamt, noi, snap, tone, dk, nk, fk, q;
+    uint32_t cnt;
+    uint8_t type;
+} drum_t;
+
 typedef struct {
     float ph, val, hold, rv;
     uint8_t run;
@@ -641,6 +790,8 @@ typedef struct {
     float fenv;
     /* filters */
     float h1, h2, l1, l2;
+    float h1r, h2r, l1r, l2r, ex1r, ex2r, ey1r, ey2r, srr_holdr;   /* (the KIT is stereo: its right side) */
+    uint8_t lp_on;
     float hg_a1, hg_a2, hg_a3, hk, lg_a1, lg_a2, lg_a3, lk;
     uint8_t hp_on;
     /* EQ */
@@ -658,6 +809,7 @@ typedef struct {
     float m_lp, m_bp, m_env1, m_env2, m_env3, m_pe;
     uint32_t acc, acc2, lfsr, m_cnt;
     float plk_len, plk_s, plk_ap_x, plk_ap_y;
+    drum_t dr;                                    /* the DRUM machine */
     uint32_t plk_w;
     /* LFOs and locks */
     lfo_t lfo[3];
@@ -802,10 +954,143 @@ static inline float onepole_k(float hz)
     return k > 1.0f ? 1.0f : k;
 }
 
+/* ================================================================== drums === */
+/* one drum voice: the DRUM machine's, and each of the KIT's eleven. Eight types (BD SD HH CL HH OP CLAP
+ * TOM RIM BELL); the values 0..127 as the DRUM machine's page has them; tr: the pitch over C4 */
+
+static void drum_set(drum_t *d, int type, float tr, float pdec, float pamt, float noi, float snap, float tone, float dcay)
+{
+    float t_dec, dcy = dcay * (1.0f / 127.0f), fc, q = 0.6f;
+    type &= 7;
+    d->type = (uint8_t)type;
+    d->tr = tr;
+    d->pdk = fm_expf(-6.9f / ((0.004f + pdec * pdec * (0.25f / 16129.0f)) * MN_SR));
+    d->pamt = pamt * (1.0f / 127.0f);
+    d->noi = noi * (1.0f / 127.0f);
+    d->snap = snap * (1.0f / 127.0f);
+    d->tone = tone * (1.0f / 127.0f);
+    switch (type) {
+    case 2: t_dec = 0.02f + dcy * dcy * 0.25f; break;              /* closed hat */
+    case 3: t_dec = 0.12f + dcy * dcy * 1.6f; break;               /* open hat */
+    case 4: t_dec = 0.05f + dcy * dcy * 0.6f; break;               /* clap */
+    case 6: t_dec = 0.01f + dcy * dcy * 0.12f; break;              /* rim */
+    default: t_dec = 0.05f + dcy * dcy * 1.8f; break;
+    }
+    d->dk = fm_expf(-6.9f / (t_dec * MN_SR));
+    d->nk = fm_expf(-6.9f / ((t_dec * 0.6f + 0.01f) * MN_SR));
+    /* the noise filter (a state-variable band/high pass): its frequency and damping per type */
+    switch (type) {
+    case 1: fc = 1500.0f + d->tone * 7000.0f; break;
+    case 2: case 3: fc = 6000.0f + d->tone * 7000.0f; break;
+    case 4: fc = 900.0f + d->tone * 1600.0f; q = 0.25f; break;
+    case 7: fc = 1800.0f + d->tone * 1200.0f; q = 0.3f; break;
+    default: fc = 300.0f + d->tone * 3000.0f; break;
+    }
+    fc *= fm_sqrtf(tr);
+    if (fc > MN_SR * 0.22f)
+        fc = MN_SR * 0.22f;
+    d->fk = 2.0f * fm_sinf(FM_PI * fc / MN_SR);
+    d->q = q;
+}
+
+static void drum_hit(drum_t *d)
+{
+    int i;
+    for (i = 0; i < 6; i++)
+        d->ph[i] = 0.0f;
+    d->lp = d->bp = d->a0 = d->a1 = 0.0f;
+    d->env = d->nenv = d->pe = 1.0f;
+    d->cnt = 0;
+}
+
+static int drum_on(const drum_t *d) { return d->cnt < 400u || d->env > 1e-4f || d->nenv > 1e-4f; }
+
+/* n samples: into out (add: onto it), times gain */
+static void drum_run(drum_t *d, float *out, uint32_t n, int add, float gain)
+{
+    const int type = d->type;
+    const float tr = d->tr, pamt = d->pamt, noi = d->noi, snap = d->snap, tone = d->tone;
+    const float fk = d->fk, q = d->q, pdk = d->pdk, dk = d->dk, nk = d->nk;
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        float s = 0.0f, nz = rnds(), f, hp, pe = d->pe, a = d->env, ne = d->nenv;
+        uint32_t c = d->cnt++;
+        /* the noise through the state-variable filter (Chamberlin) */
+        hp = nz - d->lp - q * d->bp;
+        d->bp += fk * hp;
+        d->lp += fk * d->bp;
+        switch (type) {
+        case 0:                                       /* bass drum: a sine falling from up high */
+            f = 48.0f * tr * (1.0f + pamt * 7.0f * pe);
+            d->ph[0] = wrap1(d->ph[0] + f / MN_SR);
+            s = fm_sin_turns(d->ph[0]) * a;
+            if (tone > 0.0f)
+                s = fm_tanhf(s * (1.0f + tone * 5.0f)) * (1.0f - tone * 0.35f);
+            s += noi * 0.4f * d->lp * ne;
+            break;
+        case 1:                                       /* snare: two tones and the wires */
+            f = 180.0f * tr * (1.0f + pamt * 1.5f * pe);
+            d->ph[0] = wrap1(d->ph[0] + f / MN_SR);
+            d->ph[1] = wrap1(d->ph[1] + f * 1.78f / MN_SR);
+            s = (fm_sin_turns(d->ph[0]) + 0.6f * fm_sin_turns(d->ph[1])) * 0.75f * a * (1.0f - noi * 0.5f);
+            s += noi * 1.9f * (nz - d->lp) * ne;
+            break;
+        case 2: case 3: {                             /* hats: six squares, metal, through the high pass */
+            static const float HF[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
+            float m = 0.0f;
+            int j;
+            for (j = 0; j < 6; j++) {
+                d->ph[j] = wrap1(d->ph[j] + HF[j] * 1.7f * tr / MN_SR);
+                m += d->ph[j] < 0.5f ? 1.0f : -1.0f;
+            }
+            m *= 0.16f;
+            m = m * (1.0f - noi) + nz * noi;
+            d->a0 += (m - d->a0) * 0.55f;
+            s = (m - d->a0 - 0.4f * d->a1) * a * 3.2f;
+            d->a1 = d->a1 * 0.7f + s * 0.3f;
+            break;
+        }
+        case 4: {                                     /* clap: three quick bursts, then the tail */
+            float burst = c < 1300u ? (c % 440u < 220u ? 1.0f : 0.25f) : 1.0f;
+            s = d->bp * 2.2f * ne * burst + d->bp * 0.8f * a * (c >= 1300u ? 1.0f : 0.0f);
+            break;
+        }
+        case 5:                                       /* tom */
+            f = 110.0f * tr * (1.0f + pamt * 2.0f * pe);
+            d->ph[0] = wrap1(d->ph[0] + f / MN_SR);
+            s = fm_sin_turns(d->ph[0]) * a + noi * 0.3f * d->lp * ne;
+            break;
+        case 6:                                       /* rim */
+            f = 1700.0f * tr * (1.0f + pamt * 0.5f * pe);
+            d->ph[0] = wrap1(d->ph[0] + f / MN_SR);
+            d->ph[1] = wrap1(d->ph[1] + f * 0.29f / MN_SR);
+            s = (fm_sin_turns(d->ph[0]) * 0.6f + fm_sin_turns(d->ph[1]) * 0.6f) * a;
+            break;
+        default: {                                    /* bell: two squares, as the cowbell */
+            float x;
+            d->ph[0] = wrap1(d->ph[0] + 587.0f * tr / MN_SR);
+            d->ph[1] = wrap1(d->ph[1] + 845.0f * tr / MN_SR);
+            x = (d->ph[0] < 0.5f ? 0.5f : -0.5f) + (d->ph[1] < 0.5f ? 0.5f : -0.5f);
+            d->a0 += (x - d->a0) * 0.3f;
+            s = (d->a0 - d->a1) * a * 1.5f;
+            d->a1 += (d->a0 - d->a1) * 0.05f;
+            s += noi * 0.2f * d->bp * ne;
+            break;
+        }
+        }
+        if (c < 160u && snap > 0.0f)                  /* the click */
+            s += snap * (c < 40u ? 0.9f : 0.3f) * nz * (1.0f - (float)c * (1.0f / 160.0f));
+        d->pe = pe * pdk;
+        d->env = fm_flush(a * dk);
+        d->nenv = fm_flush(ne * nk);
+        s *= gain;
+        out[i] = add ? out[i] + s : s;
+    }
+}
+
 /* a note starts (not on a slide): what the machines restart */
 static void m_note_on(voice_t *v, int machine)
 {
-    int i;
     v->m_env1 = 1.0f;
     v->m_env2 = 0.0f;
     v->m_env3 = 1.0f;
@@ -813,9 +1098,7 @@ static void m_note_on(voice_t *v, int machine)
     v->m_cnt = 0;
     switch (machine) {
     case MC_DRUM:
-        for (i = 0; i < 8; i++)
-            v->ph[i] = 0.0f;
-        v->m_lp = v->m_bp = 0.0f;
+        drum_hit(&v->dr);
         break;
     case MC_SINE:
         v->ph[0] = v->ph[1] = v->ph[2] = 0.0f;
@@ -1106,114 +1389,10 @@ static void m_render(voice_t *v, int machine, float f0, float *out, uint32_t n)
         }
         break;
     }
-    case MC_DRUM: {
-        int type = (int)(e[1] + 0.5f) & 7;
-        float tr = f0 * (1.0f / 261.6256f);            /* the note (and TUNE) over C4 */
-        float pdk = fm_expf(-6.9f / ((0.004f + e[2] * e[2] * (0.25f / 16129.0f)) * MN_SR));
-        float pamt = e[3] * (1.0f / 127.0f), noi = e[4] * (1.0f / 127.0f), snap = e[5] * (1.0f / 127.0f);
-        float tone = e[6] * (1.0f / 127.0f), dcy = e[7] * (1.0f / 127.0f), dk, nk;
-        float t_dec;
-        switch (type) {
-        case 2: t_dec = 0.02f + dcy * dcy * 0.25f; break;              /* closed hat */
-        case 3: t_dec = 0.12f + dcy * dcy * 1.6f; break;               /* open hat */
-        case 4: t_dec = 0.05f + dcy * dcy * 0.6f; break;               /* clap */
-        case 6: t_dec = 0.01f + dcy * dcy * 0.12f; break;              /* rim */
-        default: t_dec = 0.05f + dcy * dcy * 1.8f; break;
-        }
-        dk = fm_expf(-6.9f / (t_dec * MN_SR));
-        nk = fm_expf(-6.9f / ((t_dec * 0.6f + 0.01f) * MN_SR));
-        {
-            /* the noise filter (a state-variable band/high pass): its frequency and damping per type */
-            float fc, q = 0.6f;
-            switch (type) {
-            case 1: fc = 1500.0f + tone * 7000.0f; break;
-            case 2: case 3: fc = 6000.0f + tone * 7000.0f; break;
-            case 4: fc = 900.0f + tone * 1600.0f; q = 0.25f; break;
-            case 7: fc = 1800.0f + tone * 1200.0f; q = 0.3f; break;
-            default: fc = 300.0f + tone * 3000.0f; break;
-            }
-            fc *= fm_sqrtf(tr);
-            if (fc > MN_SR * 0.22f)
-                fc = MN_SR * 0.22f;
-            v->aux[6] = 2.0f * fm_sinf(FM_PI * fc / MN_SR);
-            v->aux[7] = q;
-        }
-        for (i = 0; i < n; i++) {
-            float s = 0.0f, nz = rnds(), f, hp, pe = v->m_pe, a = v->m_env1, ne = v->m_env3;
-            float fk = v->aux[6], q = v->aux[7];
-            uint32_t c = v->m_cnt++;
-            /* the noise through the state-variable filter (Chamberlin) */
-            hp = nz - v->m_lp - q * v->m_bp;
-            v->m_bp += fk * hp;
-            v->m_lp += fk * v->m_bp;
-            switch (type) {
-            case 0:                                       /* bass drum: a sine falling from up high */
-                f = 48.0f * tr * (1.0f + pamt * 7.0f * pe);
-                v->ph[0] = wrap1(v->ph[0] + f / MN_SR);
-                s = fm_sin_turns(v->ph[0]) * a;
-                if (tone > 0.0f)
-                    s = fm_tanhf(s * (1.0f + tone * 5.0f)) * (1.0f - tone * 0.35f);
-                s += noi * 0.4f * v->m_lp * ne;
-                break;
-            case 1:                                       /* snare: two tones and the wires */
-                f = 180.0f * tr * (1.0f + pamt * 1.5f * pe);
-                v->ph[0] = wrap1(v->ph[0] + f / MN_SR);
-                v->ph[1] = wrap1(v->ph[1] + f * 1.78f / MN_SR);
-                s = (fm_sin_turns(v->ph[0]) + 0.6f * fm_sin_turns(v->ph[1])) * 0.75f * a * (1.0f - noi * 0.5f);
-                s += noi * 1.9f * (nz - v->m_lp) * ne;
-                break;
-            case 2: case 3: {                             /* hats: six squares, metal, through the high pass */
-                static const float HF[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
-                float m = 0.0f;
-                int j;
-                for (j = 0; j < 6; j++) {
-                    v->ph[j] = wrap1(v->ph[j] + HF[j] * 1.7f * tr / MN_SR);
-                    m += v->ph[j] < 0.5f ? 1.0f : -1.0f;
-                }
-                m *= 0.16f;
-                m = m * (1.0f - noi) + nz * noi;
-                v->aux[0] += (m - v->aux[0]) * 0.55f;
-                s = (m - v->aux[0] - 0.4f * v->aux[1]) * a * 3.2f;
-                v->aux[1] = v->aux[1] * 0.7f + s * 0.3f;
-                break;
-            }
-            case 4: {                                     /* clap: three quick bursts, then the tail */
-                float burst = c < 1300u ? (c % 440u < 220u ? 1.0f : 0.25f) : 1.0f;
-                s = v->m_bp * 2.2f * ne * burst + v->m_bp * 0.8f * a * (c >= 1300u ? 1.0f : 0.0f);
-                break;
-            }
-            case 5:                                       /* tom */
-                f = 110.0f * tr * (1.0f + pamt * 2.0f * pe);
-                v->ph[0] = wrap1(v->ph[0] + f / MN_SR);
-                s = fm_sin_turns(v->ph[0]) * a + noi * 0.3f * v->m_lp * ne;
-                break;
-            case 6:                                       /* rim */
-                f = 1700.0f * tr * (1.0f + pamt * 0.5f * pe);
-                v->ph[0] = wrap1(v->ph[0] + f / MN_SR);
-                v->ph[1] = wrap1(v->ph[1] + f * 0.29f / MN_SR);
-                s = (fm_sin_turns(v->ph[0]) * 0.6f + fm_sin_turns(v->ph[1]) * 0.6f) * a;
-                break;
-            default: {                                    /* bell: two squares, as the cowbell */
-                float x;
-                v->ph[0] = wrap1(v->ph[0] + 587.0f * tr / MN_SR);
-                v->ph[1] = wrap1(v->ph[1] + 845.0f * tr / MN_SR);
-                x = (v->ph[0] < 0.5f ? 0.5f : -0.5f) + (v->ph[1] < 0.5f ? 0.5f : -0.5f);
-                v->aux[0] += (x - v->aux[0]) * 0.3f;
-                s = (v->aux[0] - v->aux[1]) * a * 1.5f;
-                v->aux[1] += (v->aux[0] - v->aux[1]) * 0.05f;
-                s += noi * 0.2f * v->m_bp * ne;
-                break;
-            }
-            }
-            if (c < 160u && snap > 0.0f)                  /* the click */
-                s += snap * (c < 40u ? 0.9f : 0.3f) * nz * (1.0f - (float)c * (1.0f / 160.0f));
-            v->m_pe = pe * pdk;
-            v->m_env1 = a * dk;
-            v->m_env3 = ne * nk;
-            out[i] = s;
-        }
+    case MC_DRUM:
+        drum_set(&v->dr, (int)(e[1] + 0.5f), f0 * (1.0f / 261.6256f), e[2], e[3], e[4], e[5], e[6], e[7]);
+        drum_run(&v->dr, out, n, 0, 1.0f);
         break;
-    }
     case MC_NOISE: {
         float colr = (e[1] - 64.0f) * (1.0f / 64.0f), sh = e[2], bits = e[3], dens = e[4] * (1.0f / 127.0f);
         float ring = e[5] * (1.0f / 127.0f), sine = e[6] * (1.0f / 127.0f), reso = e[7] * (1.0f / 127.0f);
@@ -1612,6 +1791,7 @@ static float track_derive(int t, uint32_t n)
     hp = fm_clampf(e[P_BASE] + bofs, 0.0f, 127.0f);
     lp = fm_clampf(hp + fm_clampf(e[P_WDTH] + wofs, 0.0f, 127.0f), 0.0f, 127.0f);
     v->hp_on = hp > 0.5f || e[P_HPQ] > 0.5f;
+    v->lp_on = lp < 126.5f || e[P_LPQ] > 0.5f;
     if (v->hp_on)
         svf_coef(fm_minf(20.0f * fm_exp2f(hp * (10.0f / 127.0f)), MN_SR * 0.45f), e[P_HPQ] * (1.0f / 127.0f),
                  &v->hg_a1, &v->hg_a2, &v->hg_a3, &v->hk);
@@ -1658,6 +1838,32 @@ static float track_derive(int t, uint32_t n)
         v->dlp_k = onepole_k(400.0f * fm_exp2f(e[P_DLP] * (5.5f / 127.0f)) * 2.0f);
     }
     return f0;
+}
+
+/* the delay, at half rate: fed every second sample, read in between by interpolation; in: what is sent */
+static float delay_tick(voice_t *v, int t, float in)
+{
+    float d = v->dold + (v->dnew - v->dold) * ((v->dw & 1u) ? 1.0f : 0.5f);
+    v->dacc += in;
+    if (v->dw & 1u) {
+        float rp = (float)(v->dw >> 1) - v->dt_s + (float)DLY_N, fr, y, w;
+        uint32_t ri = (uint32_t)rp;
+        int16_t *buf = dly_buf[t];
+        fr = rp - (float)ri;
+        y = ((float)buf[ri % DLY_N] + ((float)buf[(ri + 1u) % DLY_N] - (float)buf[ri % DLY_N]) * fr) * (1.0f / 16384.0f);
+        v->dlp += (y - v->dlp) * v->dlp_k;
+        v->dhp += (v->dlp - v->dhp) * v->dhp_k;
+        y = v->dlp - v->dhp;
+        w = v->dacc * 0.5f + y * v->dfb;
+        w = w > 1.0f || w < -1.0f ? fm_tanhf(w) : w;
+        buf[(v->dw >> 1) % DLY_N] = (int16_t)(w * 16384.0f);
+        v->dacc = 0.0f;
+        v->dold = v->dnew;
+        v->dnew = y;
+        v->dquiet = fm_fabsf(y) + fm_fabsf(w) < 1e-4f ? v->dquiet + 1u : 0u;
+    }
+    v->dw = (v->dw + 1u) % (2u * DLY_N);
+    return d;
 }
 
 /* one track, one chunk: added into l / r */
@@ -1737,30 +1943,7 @@ static void track_chunk(int t, float *l, float *r, uint32_t n)
             }
             x *= v->gain;
         }
-        /* the delay, at half rate: fed every second sample, read in between by interpolation */
-        d = 0.0f;
-        if (dly) {
-            d = v->dold + (v->dnew - v->dold) * ((v->dw & 1u) ? 1.0f : 0.5f);
-            v->dacc += x * v->dsend;
-            if (v->dw & 1u) {
-                float rp = (float)(v->dw >> 1) - v->dt_s + (float)DLY_N, fr, y, in;
-                uint32_t ri = (uint32_t)rp;
-                int16_t *buf = dly_buf[t];
-                fr = rp - (float)ri;
-                y = ((float)buf[ri % DLY_N] + ((float)buf[(ri + 1u) % DLY_N] - (float)buf[ri % DLY_N]) * fr) * (1.0f / 16384.0f);
-                v->dlp += (y - v->dlp) * v->dlp_k;
-                v->dhp += (v->dlp - v->dhp) * v->dhp_k;
-                y = v->dlp - v->dhp;
-                in = v->dacc * 0.5f + y * v->dfb;
-                in = in > 1.0f || in < -1.0f ? fm_tanhf(in) : in;
-                buf[(v->dw >> 1) % DLY_N] = (int16_t)(in * 16384.0f);
-                v->dacc = 0.0f;
-                v->dold = v->dnew;
-                v->dnew = y;
-                v->dquiet = fm_fabsf(y) + fm_fabsf(in) < 1e-4f ? v->dquiet + 1u : 0u;
-            }
-            v->dw = (v->dw + 1u) % (2u * DLY_N);
-        }
+        d = dly ? delay_tick(v, t, x * v->dsend) : 0.0f;
         x += d;
         l[i] += x * v->gl;
         r[i] += x * v->gr;
@@ -1768,6 +1951,256 @@ static void track_chunk(int t, float *l, float *r, uint32_t n)
         pk = x > pk ? x : pk;
     }
     mn_level[t] = pk;
+}
+
+
+/* =================================================================== the KIT === */
+/* track 1's eleven drum voices: each hit with its values (and the step's locks), through the track's strip in
+ * stereo (each voice has its pan), each with its send to the track's delay */
+typedef struct {
+    drum_t d;
+    float p[8];                                    /* the SYN page's values it was hit with */
+    float last[8];                                 /* the values drum_set last had (the same: not again) */
+    float semis, gain, gl, gr, dsnd, riv, rt;
+    uint8_t on, choked, chok, rleft, fresh;
+    uint32_t midi_left;
+} kvoice_t;
+#define KV_MAXON 6                                 /* (the CPU: a voice choked fades in 8 ms, then stops) */
+static kvoice_t kv[MN_NKV];
+volatile uint8_t mn_kv_count[MN_NKV];
+static int kit_on(void) { return machine_of(MN_KIT_TRACK) == MC_KIT; }
+
+/* a hit: pv = the voice's sixteen values, accg = the accent's (or a pad's velocity's) gain */
+static void kit_trigger(int i, const float *pv, float accg, float semis, int midi)
+{
+    kvoice_t *k = &kv[i];
+    int j, rt = ((int)pv[KV_RTRG] & 3) + 1;
+    float lv = pv[KV_LEVL] * (1.0f / 127.0f), a = pv[KV_PAN] * (1.0f / 127.0f) * (FM_PI * 0.5f), ds = pv[KV_DSND] * (1.0f / 127.0f);
+    for (j = 0; j < 8; j++)
+        k->p[j] = pv[j];
+    k->semis = semis;
+    k->gain = lv * lv * accg;
+    k->gl = fm_cosf(a) * 1.41421f;
+    k->gr = fm_sinf(a) * 1.41421f;
+    k->dsnd = ds * ds;
+    k->chok = (uint8_t)((int)pv[KV_CHOK] & 3);
+    if (k->chok)                                   /* the same choke group: the others stop */
+        for (j = 0; j < MN_NKV; j++)
+            if (j != i && kv[j].on && kv[j].chok == k->chok)
+                kv[j].choked = 1;
+    k->choked = 0;
+    if (!k->on) {                                  /* at most KV_MAXON sound at once: the quietest gives way */
+        int n = 0, q = -1;
+        float lo = 2.0f;
+        for (j = 0; j < MN_NKV; j++)
+            if (kv[j].on) {
+                n++;
+                if (kv[j].d.env + kv[j].d.nenv < lo && !kv[j].rleft) {
+                    lo = kv[j].d.env + kv[j].d.nenv;
+                    q = j;
+                }
+            }
+        if (n >= KV_MAXON && q >= 0)
+            kv[q].choked = 1;
+    }
+    k->on = 1;
+    k->fresh = 1;
+    drum_hit(&k->d);
+    k->rleft = (uint8_t)(rt - 1);                  /* a ratchet: more hits, evenly in the step */
+    k->riv = pat_step_samples() / (float)rt;
+    k->rt = k->riv;
+    mn_kv_count[i]++;
+    mn_trig_count[MN_KIT_TRACK]++;
+    if (midi && mn_midi_out_on) {
+        uint32_t ch = 0x90u | ((mn_midi_base + (uint32_t)MN_KIT_TRACK) & 15u);
+        midi_send(ch, (uint32_t)KV_NOTE[i], accg > 1.05f ? 120u : 96u);
+        k->midi_left = (uint32_t)(MN_SR * 0.05f);
+    }
+}
+
+static void kit_live(int i, int vel, int semis)    /* a pad: the kit's values, no locks */
+{
+    float pv[MN_KVP];
+    int p;
+    if (!cur)
+        return;
+    for (p = 0; p < MN_KVP; p++)
+        pv[p] = (float)cur->drums.par[i][p];
+    if (pv[KV_MUTE] > 0.5f)
+        return;
+    kit_trigger(i, pv, (float)vel * (1.0f / 100.0f), (float)semis, 0);
+}
+
+/* the KIT's step: the track's locks (as a trig's, when a voice plays) and each voice with its own */
+static void kit_step(int s)
+{
+    mn_song_t *sg = cur;
+    voice_t *v = &vo[MN_KIT_TRACK];
+    float pv[MN_NKV][MN_KVP];
+    int r, i, p, any, nl = 0;
+    if (mn_mute >> MN_KIT_TRACK & 1u)
+        return;
+    any = mn_kv_any(&sg->drums, s);
+    for (r = 0; r < MN_NLOCK; r++)
+        nl += sg->pat.ltrk[r] == MN_KIT_TRACK && sg->pat.lpar[r] < MN_NP && sg->pat.lval[r][s] != 0xFF;
+    if (any)
+        for (p = 0; p < MN_NP; p++)
+            v->lock[p] = -1;
+    if (nl)
+        for (r = 0; r < MN_NLOCK; r++)
+            if (sg->pat.ltrk[r] == MN_KIT_TRACK && sg->pat.lpar[r] < MN_NP && sg->pat.lval[r][s] != 0xFF)
+                v->lock[sg->pat.lpar[r]] = sg->pat.lval[r][s];
+    if (!any)
+        return;
+    for (i = 0; i < MN_NKV; i++)
+        for (p = 0; p < MN_KVP; p++)
+            pv[i][p] = (float)sg->drums.par[i][p];
+    for (r = 0; r < MN_NLOCK; r++) {               /* the voices' locks on this step */
+        int q = sg->pat.lpar[r] - MN_NP;
+        if (sg->pat.ltrk[r] == MN_KIT_TRACK && q >= 0 && q < MN_NKV * MN_KVP && sg->pat.lval[r][s] != 0xFF)
+            pv[q / MN_KVP][q % MN_KVP] = (float)sg->pat.lval[r][s];
+    }
+    for (i = 0; i < MN_NKV; i++) {
+        int f = mn_kv_get(&sg->drums, i, s);
+        if (!f || pv[i][KV_MUTE] > 0.5f)
+            continue;
+        if (pv[i][KV_PROB] < 126.5f && (float)(rnd() % 127u) >= pv[i][KV_PROB])
+            continue;
+        kit_trigger(i, pv[i], (f & MN_ACC) ? 1.0f + pv[i][KV_ACNT] * (0.8f / 127.0f) : 1.0f, 0.0f, 1);
+    }
+}
+
+static void kit_chunk(float *l, float *r, uint32_t n)
+{
+    voice_t *v = &vo[MN_KIT_TRACK];
+    float kl[BLK], kr[BLK], snd[BLK], tmp[BLK], pk = 0.0f;
+    uint32_t j;
+    int i, any = 0, sends = 0, dly;
+    const float choke_k = fm_expf(-6.9f / (0.008f * MN_SR));
+    for (j = 0; j < n; j++)
+        kl[j] = kr[j] = snd[j] = 0.0f;
+    for (i = 0; i < MN_NKV; i++) {
+        kvoice_t *k = &kv[i];
+        float pv[8];
+        int q;
+        if (k->midi_left) {
+            if (k->midi_left > n) {
+                k->midi_left -= n;
+            } else {
+                k->midi_left = 0;
+                midi_send(0x80u | ((mn_midi_base + (uint32_t)MN_KIT_TRACK) & 15u), (uint32_t)KV_NOTE[i], 0);
+            }
+        }
+        if (k->rleft) {
+            k->rt -= (float)n;
+            if (k->rt <= 0.0f) {
+                k->rt += k->riv;
+                k->rleft--;
+                k->on = 1;
+                k->choked = 0;
+                drum_hit(&k->d);
+                mn_kv_count[i]++;
+            }
+        }
+        if (!k->on)
+            continue;
+        for (q = 0; q < 8; q++) {                  /* the track's LFOs aimed at its SYN page: every voice's */
+            float x = k->p[q] + v->mod[q], mx = (float)KV_INFO[q].max;
+            pv[q] = x < 0.0f ? 0.0f : x > mx ? mx : x;
+            if (pv[q] != k->last[q])
+                k->fresh = 1;
+            k->last[q] = pv[q];
+        }
+        if (k->fresh) {                            /* (worked out again only when something moved) */
+            k->fresh = 0;
+            drum_set(&k->d, (int)(pv[KV_TYPE] + 0.5f), fm_exp2f((pv[KV_TUNE] - 64.0f + k->semis) * (1.0f / 12.0f)),
+                     pv[KV_PDEC], pv[KV_PAMT], pv[KV_NOIS], pv[KV_SNAP], pv[KV_TONE], pv[KV_DCAY]);
+        }
+        if (k->choked)
+            k->d.dk = k->d.nk = choke_k;
+        drum_run(&k->d, tmp, n, 0, k->gain);
+        for (j = 0; j < n; j++) {
+            kl[j] += tmp[j] * k->gl;
+            kr[j] += tmp[j] * k->gr;
+        }
+        if (k->dsnd > 0.0f) {
+            for (j = 0; j < n; j++)
+                snd[j] += tmp[j] * k->dsnd;
+            sends = 1;
+        }
+        if (!drum_on(&k->d) && !k->rleft)
+            k->on = 0;
+        any = 1;
+    }
+    dly = sends || v->dquiet < 4000u;
+    if (!any && !dly) {
+        mn_level[MN_KIT_TRACK] = 0.0f;
+        return;
+    }
+    track_derive(MN_KIT_TRACK, n);
+    for (j = 0; j < n; j++) {
+        float x = kl[j], y = kr[j], d;
+        if (v->hp_on) {
+            float v3 = x - v->h2, v1 = v->hg_a1 * v->h1 + v->hg_a2 * v3, v2 = v->h2 + v->hg_a2 * v->h1 + v->hg_a3 * v3;
+            v->h1 = 2.0f * v1 - v->h1;
+            v->h2 = 2.0f * v2 - v->h2;
+            x = x - v->hk * v1 - v2;
+            v3 = y - v->h2r;
+            v1 = v->hg_a1 * v->h1r + v->hg_a2 * v3;
+            v2 = v->h2r + v->hg_a2 * v->h1r + v->hg_a3 * v3;
+            v->h1r = 2.0f * v1 - v->h1r;
+            v->h2r = 2.0f * v2 - v->h2r;
+            y = y - v->hk * v1 - v2;
+        }
+        if (v->lp_on) {
+            float v3 = x - v->l2, v1 = v->lg_a1 * v->l1 + v->lg_a2 * v3, v2 = v->l2 + v->lg_a2 * v->l1 + v->lg_a3 * v3;
+            v->l1 = fm_flush(2.0f * v1 - v->l1);
+            v->l2 = fm_flush(2.0f * v2 - v->l2);
+            x = v2;
+            v3 = y - v->l2r;
+            v1 = v->lg_a1 * v->l1r + v->lg_a2 * v3;
+            v2 = v->l2r + v->lg_a2 * v->l1r + v->lg_a3 * v3;
+            v->l1r = fm_flush(2.0f * v1 - v->l1r);
+            v->l2r = fm_flush(2.0f * v2 - v->l2r);
+            y = v2;
+        }
+        if (v->drive > 1.01f) {
+            x = fm_tanhf(x * v->drive) * v->dnorm;
+            y = fm_tanhf(y * v->drive) * v->dnorm;
+        }
+        if (v->eq_on) {
+            float o = v->eb0 * x + v->eb1 * v->ex1 + v->eb2 * v->ex2 - v->ea1 * v->ey1 - v->ea2 * v->ey2;
+            v->ex2 = v->ex1;
+            v->ex1 = x;
+            v->ey2 = v->ey1;
+            v->ey1 = fm_flush(o);
+            x = o;
+            o = v->eb0 * y + v->eb1 * v->ex1r + v->eb2 * v->ex2r - v->ea1 * v->ey1r - v->ea2 * v->ey2r;
+            v->ex2r = v->ex1r;
+            v->ex1r = y;
+            v->ey2r = v->ey1r;
+            v->ey1r = fm_flush(o);
+            y = o;
+        }
+        if (v->srr_inc < 0.999f) {
+            v->srr_ph += v->srr_inc;
+            if (v->srr_ph >= 1.0f) {
+                v->srr_ph -= 1.0f;
+                v->srr_hold = x;
+                v->srr_holdr = y;
+            }
+            x = v->srr_hold;
+            y = v->srr_holdr;
+        }
+        d = dly ? delay_tick(v, MN_KIT_TRACK, snd[j] * v->gain) : 0.0f;
+        x = x * v->gain + d;
+        y = y * v->gain + d;
+        l[j] += x * v->gl;
+        r[j] += y * v->gr;
+        x = fm_fabsf(x) > fm_fabsf(y) ? fm_fabsf(x) : fm_fabsf(y);
+        pk = x > pk ? x : pk;
+    }
+    mn_level[MN_KIT_TRACK] = pk;
 }
 
 /* ================================================================ sequencer === */
@@ -1794,6 +2227,10 @@ static void step_fire(int s)
         voice_t *v = &vo[t];
         uint8_t fl = sg->pat.trig[t][s];
         int nl = 0;
+        if (t == MN_KIT_TRACK && kit_on()) {
+            kit_step(s);
+            continue;
+        }
         if (mn_mute >> t & 1u)
             continue;
         for (r = 0; r < MN_NLOCK; r++)
@@ -1962,6 +2399,12 @@ static void live_note_on(int t, int note, int vel)
 {
     voice_t *v = &vo[t];
     int i, p;
+    if (t == MN_KIT_TRACK && kit_on()) {           /* the kit: its voices on their GM notes */
+        i = mn_kv_of_note(note);
+        if (i >= 0)
+            kit_live(i, vel, 0);
+        return;
+    }
     for (i = 0; i < v->nlive; i++)                     /* already held: to the top */
         if (v->live[i] == note)
             break;
@@ -1993,6 +2436,8 @@ static void live_note_off(int t, int note)
 {
     voice_t *v = &vo[t];
     int i, top;
+    if (t == MN_KIT_TRACK && kit_on())
+        return;
     for (i = 0; i < v->nlive && v->live[i] != note; i++)
         ;
     if (i == v->nlive)
@@ -2024,6 +2469,10 @@ static void quiet(void)
 {
     int t, i;
     dc_l = dc_r = dcx_l = dcx_r = 0.0f;
+    for (i = 0; i < MN_NKV; i++) {
+        kv[i].on = 0;
+        kv[i].rleft = 0;
+    }
     for (t = 0; t < MN_NT; t++) {
         voice_t *v = &vo[t];
         v->stage = 0;
@@ -2074,6 +2523,7 @@ static void drain(void)
             break;
         }
         case C_PANIC: quiet(); break;
+        case C_KITHIT: kit_live(c.t, c.a, c.b); break;
         case C_QUEUE:
             if (!mn_playing && c.p) {                   /* stopped: at once */
                 cur = (mn_song_t *)c.p;
@@ -2184,8 +2634,12 @@ void mn_render(int32_t *out, uint32_t n, uint32_t gain_q12)
         for (i = 0; i < k; i++)
             l[i] = r[i] = 0.0f;
         if (cur)
-            for (t = 0; t < MN_NT; t++)
-                track_chunk(t, l, r, k);
+            for (t = 0; t < MN_NT; t++) {
+                if (t == MN_KIT_TRACK && kit_on())
+                    kit_chunk(l, r, k);
+                else if (machine_of(t) != MC_KIT)
+                    track_chunk(t, l, r, k);
+            }
         for (i = 0; i < k; i++) {                       /* a DC blocker, the gain, a soft clip */
             float a = l[i], b = r[i], ya = a - dcx_l + 0.9995f * dc_l, yb = b - dcx_r + 0.9995f * dc_r;
             dcx_l = a;

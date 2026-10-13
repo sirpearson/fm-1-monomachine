@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* MNM-1 storage: the global settings (OBJ_PROJ) and the 32 pattern slots (a kit and a pattern each,
+/* MNM-1 storage: the global settings (OBJ_PROJ) and the 16 pattern slots (a kit and a pattern each,
  * OBJ_PAT0 + slot). A slot of another format, or none, gives a new song: the demo in slot 0, the default
  * kit and an empty pattern elsewhere. Part of the unity build, after app.h. (FiMba-1's project.c.) */
 project_t proj;

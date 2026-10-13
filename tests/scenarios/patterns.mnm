@@ -7,18 +7,18 @@ turn PRESET 1
 wait 800
 expect slot 1
 expect projslot 1
-expect trig0_0 0
-expect machine0 7
-# put a step on, save
+expect kv0_0 0
+expect machine0 12
+# put a step on (the KIT's kick), save
 tapkey w0
-expect trig0_0 1
+expect kv0_0 1
 tap SAVE
 expect dirty 0
 # back to A01: the demo
 turn PRESET -1
 wait 800
 expect slot 0
-expect trig0_4 1
+expect kv0_4 1
 # playing: A02 waits for the end of A01
 tap PLAY
 wait 300
@@ -29,7 +29,7 @@ expect slot 0
 wait 1800
 expect queued 0
 expect slot 1
-expect trig0_4 0
+expect kv0_4 0
 tap PLAY
 wait 100
 # save as: SAVE held, PRESETS to A05, released
@@ -41,15 +41,19 @@ wait 50
 expect slot 4
 expect projslot 4
 expect dirty 0
-# CLEAR?: SAVE held long, SAVE again clears the pattern (the kit stays)
+# CLEAR?: SAVE held long, SAVE again clears the pattern (the kit stays): on track 2's REL
+press SEQ
+tapkey b1
+release SEQ
 tap ENV
 spin K4 10
 press SAVE
 wait 1600
 release SAVE
 tap SAVE
-expect trig0_0 0
-expect par0_11 127
+expect kv0_0 0
+expect trig1_0 0
+expect par1_11 22
 # the tempo (HOME), then everything after a reboot (autosave once quiet)
 tap HOME
 spin K1 5
@@ -63,9 +67,9 @@ wait 300
 expect slot 4
 expect tempo 1250
 expect swing 56
-expect trig0_0 0
+expect kv0_0 0
 turn PRESET -3
 wait 800
 expect slot 1
-expect trig0_0 1
+expect kv0_0 1
 expect dropped 0

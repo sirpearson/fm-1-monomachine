@@ -5,9 +5,11 @@
  *   SEQ        GRID (the white keys are the 16 steps of the track selected) / KEYS (every key plays it)
  *   GRID       a step key: trig on / off. Held: KNOB 1-4 lock the page's values on that step (several
  *              held: on all of them), PRESETS its note, ALGORITHM its octave.
- *              black keys: 1-6 the tracks; MUTE (tap: the track; held: + a track key), ACC + a step:
- *              accent, SLD + a step: slide, COPY (the track), PASTE (its steps; held: and its sound),
- *              COPY held + PASTE: clear the track
+ *              black keys: the KIT's eleven voices (track 1): a key picks its voice (and plays it), the
+ *              white keys are then its steps.
+ *              SEQ held (a shift) + a black key: 1-6 the tracks; MUT (tap: the track; held: + a track key),
+ *              ACC + a step: accent, SLD + a step: slide, CPY (the track), PST (its steps; held: and its
+ *              sound), CPY held + PST: clear the track. SEQ alone, released: GRID / KEYS
  *   KEYS       27 keys from F, OCT- / OCT+ the octave; the pattern's scale lights its keys (SNAP: a key out
  *              of it plays the nearest note in it). With REC, playing: the notes go on the steps they fall on
  *              (a key pressed while another is held: a slide). With REC, stopped: STEP REC, a note a step and
@@ -17,7 +19,7 @@
  *   EDIT SYN  ENV AMP  SEL FILT  FX FX  LFO LFO1-3  ARP TRK   pressed again: the other four of the page
  *   HOME       the pattern: tempo, swing, length, speed; root, scale, snap; every track's steps
  *   GLO        MIDI, clock, the grid following, the colours
- *   SELECT     the track     ALGORITHM the machine (SYN page)     PRESETS the pattern (32 slots; playing:
+ *   SELECT     the track     ALGORITHM the machine (SYN page)     PRESETS the pattern (16 slots; playing:
  *              it changes at the end of this one)     KNOB 1-4 the four values of the page
  *   SAVE       tap: saves the pattern and its kit. Held + PRESETS: saves to another slot (a copy).
  *              Held long: CLEAR? (SAVE again: the pattern; REC: the kit too)
@@ -69,16 +71,20 @@ static struct {
     uint8_t trig_seen[MN_NT];
     uint8_t flash[MN_NT];
     uint8_t arm;                           /* STEP REC: MN_ACC / MN_SLIDE for the next note */
+    uint8_t voice;                         /* the KIT's voice the pages and the steps show */
+    uint32_t shift_keys;                   /* black keys pressed with SEQ held: the shift layer's */
+    uint8_t kv_seen[MN_NKV], kv_flash[MN_NKV];
     int8_t pulse_step;                     /* the step that just played (its cell lights up) */
     uint32_t pulse_t;
     int8_t step_seen;
     float meter[MN_NT];                    /* the strip's meters, falling */
 } ui;
 
-/* the clipboard: one track */
+/* the clipboard: one track (the KIT: its drums too) */
 static struct {
     uint8_t machine, par[MN_NP], trig[MN_NSTEP], note[MN_NSTEP];
     uint8_t nrow, lpar[MN_NLOCK], lval[MN_NLOCK][MN_NSTEP];
+    mn_drums_t drums;
 } clip;
 
 static void say(const char *a, const char *b)
@@ -121,7 +127,7 @@ static char *itoa_u(uint32_t v, char *b)
     *b = 0;
     return b;
 }
-static char *slot_name(uint32_t s, char *b)         /* A01 .. B16 */
+static char *slot_name(uint32_t s, char *b)         /* A01 .. A16 */
 {
     *b++ = (char)('A' + s / 16u);
     *b++ = (char)('0' + (s % 16u + 1u) / 10u);
@@ -146,6 +152,9 @@ static char *note_name(int n, char *b)              /* MIDI 60: C4 */
 static mn_song_t *song(void) { return mn_song(); }
 static mn_kit_t *kit(void) { return &mn_song()->kit; }
 static mn_pat_t *pat(void) { return &mn_song()->pat; }
+static mn_drums_t *drums(void) { return &mn_song()->drums; }
+static int is_kit(int t) { return t == MN_KIT_TRACK && kit()->machine[t] == MC_KIT; }
+static int kit_sel(void) { return is_kit(ui.track); }
 static int buf_of(const mn_song_t *s)
 {
     int i;
@@ -222,6 +231,10 @@ static int view_is_track(void) { return ui.view < MN_NPAGE; }
 static int page_of_view(void) { return ui.view == PG_LFO1 ? PG_LFO1 + ui.lfo : ui.view; }
 /* the value KNOB i turns on a track page */
 static int knob_par(int i) { return page_of_view() * 8 + ui.row[ui.view] * 4 + i; }
+/* the KIT: its SYN and TRK pages are the voice selected's sixteen values (-1: not a voice page) */
+static int kv_base(void) { return !kit_sel() ? -1 : ui.view == PG_SYN ? 0 : ui.view == PG_TRK ? 8 : -1; }
+/* the KIT's track values that do nothing (its voices have their own envelopes and sends) */
+static int kit_off(int p) { return p == P_ATK || p == P_HOLD || p == P_DEC || p == P_REL || p == P_PORT || p == P_DSND; }
 
 static uint8_t accel_off;                    /* the host simulator's "spin": exact steps */
 static int32_t accel(int role, int32_t s, int range)
@@ -253,9 +266,46 @@ static void say_par(int t, int p, int v, int locked)
 
 /* a track value: on the held steps as locks, else the kit's (and, recording while it plays, a lock on
  * the step playing if it has a trig) */
+static void voice_turn(int i, int32_t e)            /* the KIT's voice pages */
+{
+    int kp = kv_base() + ui.row[ui.view] * 4 + i, mx = mn_kv_info(kp)->max, w, d = accel(EN_K1 + i, e, mx), v = 0;
+    uint8_t *par = drums()->par[ui.voice];
+    if (ui.held && !ui.keys_mode) {
+        int full = 0;
+        char a[16], b[12];
+        for (w = 0; w < NWHITE; w++)
+            if (ui.held >> w & 1u) {
+                int s = step_of(w), cur = mn_lock_get(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, kp), s);
+                v = clampi((cur < 0 ? par[kp] : cur) + d, 0, mx);
+                full |= mn_lock_set(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, kp), s, v);
+                ui.key_used |= 1u << WHITE_K[w];
+            }
+        s_cpy(s_cpy(a, "LOCK "), mn_kv_info(kp)->name);
+        mn_kv_text(kp, v, b);
+        if (full)
+            say("LOCKS FULL", "32 IN USE");
+        else
+            say(a, b);
+        mark_dirty();
+        return;
+    }
+    par[kp] = (uint8_t)clampi(par[kp] + d, 0, mx);
+    if (ui.rec && mn_playing && mn_step >= 0 && mn_kv_get(drums(), ui.voice, mn_step))
+        mn_lock_set(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, kp), mn_step, par[kp]);
+    mark_dirty();
+}
+
 static void track_turn(int i, int32_t e)
 {
     int t = ui.track, p = knob_par(i), mx = mn_par_info(kit()->machine[t], p)->max, w, d;
+    if (kv_base() >= 0) {
+        voice_turn(i, e);
+        return;
+    }
+    if (kit_sel() && kit_off(p)) {
+        say(mn_par_info(MC_KIT, p)->name, "NOT ON THE KIT");
+        return;
+    }
     d = accel(EN_K1 + i, e, mx);
     if (ui.held && !ui.keys_mode) {
         int full = 0, v = 0;
@@ -345,6 +395,19 @@ static void set_track(int t)
     say(a, b);
 }
 
+static void set_voice(int v)                         /* a KIT voice: picked, on the KIT track */
+{
+    char a[12], *e;
+    ui.voice = (uint8_t)clampi(v, 0, MN_NKV - 1);
+    if (ui.track != MN_KIT_TRACK)
+        ui.track = MN_KIT_TRACK;
+    char b[12];
+    e = s_cpy(a, "KIT V");
+    itoa_u((uint32_t)ui.voice + 1u, e);
+    mn_kv_text(KV_TYPE, drums()->par[ui.voice][KV_TYPE], b);
+    say(a, b);
+}
+
 static void set_machine(int t, int m)
 {
     uint8_t *p = kit()->par[t];
@@ -384,7 +447,9 @@ static void copy_track(void)
                 clip.lval[clip.nrow][s] = pat()->lval[r][s];
             clip.nrow++;
         }
-    ui.clip_ok = 1;
+    if (is_kit(t))
+        clip.drums = *drums();
+    ui.clip_ok = (uint8_t)(1 + is_kit(t));         /* 2: a kit's */
     say("COPIED", "TRACK");
 }
 
@@ -392,6 +457,8 @@ static void clear_track(int t)
 {
     int s;
     mn_lock_clear_track(pat(), t);
+    if (is_kit(t))
+        mn_drums_clear(drums());
     for (s = 0; s < MN_NSTEP; s++) {
         pat()->trig[t][s] = 0;
         pat()->note[t][s] = ui.last_note[t];
@@ -406,7 +473,17 @@ static void paste_track(int sound)
         say("NOTHING", "COPIED");
         return;
     }
+    if (is_kit(t) != (ui.clip_ok == 2)) {
+        say("NOT HERE", is_kit(t) ? "A SYNTH'S STEPS" : "THE KIT'S STEPS");
+        return;
+    }
     clear_track(t);
+    if (is_kit(t)) {
+        memcpy(drums()->trig, clip.drums.trig, sizeof clip.drums.trig);
+        memcpy(drums()->acc, clip.drums.acc, sizeof clip.drums.acc);
+        if (sound)
+            memcpy(drums()->par, clip.drums.par, sizeof clip.drums.par);
+    }
     memcpy(pat()->trig[t], clip.trig, MN_NSTEP);
     memcpy(pat()->note[t], clip.note, MN_NSTEP);
     for (r = 0; r < clip.nrow; r++)
@@ -417,6 +494,7 @@ static void paste_track(int sound)
         kit()->machine[t] = clip.machine;
         memcpy(kit()->par[t], clip.par, MN_NP);
     }
+    (void)0;
     mark_dirty();
     say(full ? "LOCKS FULL" : "PASTED", sound ? "SOUND+STEPS" : "STEPS");
 }
@@ -445,12 +523,38 @@ static void cursor_to(int s)
     ui.cursor = (uint8_t)((s % pat_len() + pat_len()) % pat_len());
     ui.spage = (uint8_t)(ui.cursor / 16);
 }
+static void rec_kit(int v)                          /* recording a KIT voice: the step it falls on, or the cursor's */
+{
+    int s;
+    if (!ui.rec)
+        return;
+    if (mn_playing) {
+        s = mn_step;
+        if (s < 0)
+            return;
+        if (mn_step_frac > 0.5f)
+            s = (s + 1) % pat_len();
+        mn_kv_put(drums(), v, s, MN_TRIG);
+    } else {                                         /* STEP REC: the voices stack on the cursor's step */
+        s = ui.cursor % pat_len();
+        mn_kv_put(drums(), v, s, MN_TRIG | ui.arm);
+        ui.arm = 0;
+    }
+    mark_dirty();
+}
+
 static void rec_note(int t, int n, int legato)
 {
     int s;
     uint8_t f = MN_TRIG;
     if (!ui.rec)
         return;
+    if (is_kit(t)) {
+        int v = mn_kv_of_note(n);
+        if (v >= 0)
+            rec_kit(v);
+        return;
+    }
     if (mn_playing) {
         s = mn_step;
         if (s < 0)
@@ -485,6 +589,19 @@ static void step_rec_button(int b)
 {
     int t = ui.track, s = ui.cursor % pat_len(), prev = (s + pat_len() - 1) % pat_len();
     char a[8];
+    if (is_kit(t)) {                                 /* the KIT: NEXT, ACC, BACK */
+        if (b == B_FX || b == B_EDIT) {
+            cursor_to(b == B_FX ? s + 1 : s - 1);
+            itoa_u((uint32_t)ui.cursor + 1u, a);
+            say("STEP", a);
+        } else if (b == B_ENV) {
+            ui.arm ^= MN_ACC;
+            say("NEXT HIT", ui.arm & MN_ACC ? "ACCENT" : "NO ACCENT");
+        } else {
+            say("KIT", "NO SLIDE OR TIE");
+        }
+        return;
+    }
     switch (b) {
     case B_FX:                                       /* REST */
         pat()->trig[t][s] = 0;
@@ -524,6 +641,18 @@ static void step_toggle(int w)
     mn_pat_t *p = pat();
     if (s >= pat_len())
         return;
+    if (is_kit(t)) {                                 /* the voice selected's step */
+        int r;
+        if (mn_kv_get(drums(), ui.voice, s)) {
+            mn_kv_put(drums(), ui.voice, s, 0);
+            for (r = 0; r < MN_KVP; r++)                 /* (its locks go with it) */
+                mn_lock_clear(p, t, MN_KVPAR(ui.voice, r), s);
+        } else {
+            mn_kv_put(drums(), ui.voice, s, MN_TRIG);
+        }
+        mark_dirty();
+        return;
+    }
     if (p->trig[t][s] & MN_TRIG) {
         p->trig[t][s] = 0;
         mn_lock_clear_step(p, t, s);
@@ -536,23 +665,32 @@ static void step_toggle(int w)
 
 static void white_down(int w)
 {
-    uint32_t k = WHITE_K[w];
+    uint32_t k = WHITE_K[w], acc = ui.shift_keys >> BLACK_K[BK_ACC] & 1u, sld = ui.shift_keys >> BLACK_K[BK_SLD] & 1u;
     if (ui.keys_mode) {
+        if (kit_sel()) {                             /* the KIT: the white keys play its voice, pitched */
+            mn_kit_hit(ui.voice, 100, key_base() + (int)k - 60);
+            rec_kit(ui.voice);
+            return;
+        }
         ui.key_note[k] = (uint8_t)key_note_of(k);
         play_note(ui.track, ui.key_note[k], 100, (ui.keys & ~(1u << k)) != 0);
         return;
     }
-    if (ui.keys >> BLACK_K[BK_ACC] & 1u || ui.keys >> BLACK_K[BK_SLD] & 1u) {   /* ACC / SLD + a step */
+    if (acc || sld) {                                /* (SEQ +) ACC / SLD held + a step */
         int s = step_of(w), t = ui.track;
-        uint8_t f = ui.keys >> BLACK_K[BK_ACC] & 1u ? MN_ACC : MN_SLIDE;
-        if (s < pat_len()) {
+        uint8_t f = acc ? MN_ACC : MN_SLIDE;
+        if (s < pat_len() && kit_sel()) {
+            if (acc)
+                mn_kv_put(drums(), ui.voice, s, (mn_kv_get(drums(), ui.voice, s) ^ MN_ACC) | MN_TRIG);
+            mark_dirty();
+        } else if (s < pat_len()) {
             if (!(pat()->trig[t][s] & MN_TRIG))
                 pat()->note[t][s] = ui.last_note[t];
             pat()->trig[t][s] = (uint8_t)((pat()->trig[t][s] ^ f) | MN_TRIG);
             mark_dirty();
         }
         ui.key_used |= 1u << k;
-        ui.key_used |= ui.keys >> BLACK_K[BK_ACC] & 1u ? 1u << BLACK_K[BK_ACC] : 1u << BLACK_K[BK_SLD];
+        ui.key_used |= acc ? 1u << BLACK_K[BK_ACC] : 1u << BLACK_K[BK_SLD];
         return;
     }
     ui.held |= 1u << w;
@@ -563,6 +701,8 @@ static void white_up(int w)
 {
     uint32_t k = WHITE_K[w];
     if (ui.keys_mode) {
+        if (kit_sel())
+            return;
         mn_note_off(ui.track, ui.key_note[k]);
         note_out(ui.track, 0, ui.key_note[k], 0);
         return;
@@ -574,49 +714,70 @@ static void white_up(int w)
     }
 }
 
+/* the black keys: the KIT's voices (GRID: picked and played; KEYS: on the KIT, played as pads; on a synth,
+ * its notes). With SEQ held: the shift layer, the tracks and the tools */
+static int shift_held(void) { return (ui.btn >> B_SEQ & 1u) != 0; }
+
 static void black_down(int b)
 {
     uint32_t k = BLACK_K[b];
-    if (ui.keys_mode) {
+    ui.key_used &= ~(1u << k);
+    if (shift_held()) {
+        ui.shift_keys |= 1u << k;
+        ui.btn_used |= 1u << B_SEQ;                  /* (SEQ was a shift: no GRID / KEYS on its release) */
+        if (b < MN_NT) {
+            if (ui.shift_keys >> BLACK_K[BK_MUTE] & 1u) {   /* MUT held + a track */
+                toggle_mute(b);
+                ui.key_used |= 1u << BLACK_K[BK_MUTE];
+            } else {
+                set_track(b);
+            }
+        } else if (b == BK_PASTE) {
+            if (ui.shift_keys >> BLACK_K[BK_COPY] & 1u) {   /* CPY held + PST: clear */
+                char a[4] = {'T', (char)('1' + ui.track), 0, 0};
+                clear_track(ui.track);
+                ui.key_used |= 1u << BLACK_K[BK_COPY] | 1u << k;
+                say(a, "CLEARED");
+            } else {
+                ui.paste_t = plat_ms();
+            }
+        }
+        return;
+    }
+    if (ui.keys_mode && !kit_sel()) {                /* a synth's keyboard: its notes */
         ui.key_note[k] = (uint8_t)key_note_of(k);
         play_note(ui.track, ui.key_note[k], 100, (ui.keys & ~(1u << k)) != 0);
         return;
     }
-    ui.key_used &= ~(1u << k);
-    if (b < MN_NT) {
-        if (ui.keys >> BLACK_K[BK_MUTE] & 1u) {      /* MUTE held + a track */
-            toggle_mute(b);
-            ui.key_used |= 1u << BLACK_K[BK_MUTE];
-        } else {
-            set_track(b);
-        }
-    } else if (b == BK_PASTE) {
-        if (ui.keys >> BLACK_K[BK_COPY] & 1u) {      /* COPY held + PASTE: clear */
-            char a[4] = {'T', (char)('1' + ui.track), 0, 0};
-            clear_track(ui.track);
-            ui.key_used |= 1u << BLACK_K[BK_COPY] | 1u << k;
-            say(a, "CLEARED");
-        } else {
-            ui.paste_t = plat_ms();
-        }
+    if (ui.keys_mode) {                              /* the KIT's pads */
+        ui.voice = (uint8_t)b;
+        mn_kit_hit(b, 100, 0);
+        rec_kit(b);
+        return;
     }
+    set_voice(b);                                    /* GRID: the voice, its steps on the white keys */
+    if (!mn_playing)
+        mn_kit_hit(b, 100, 0);
 }
 
 static void black_up(int b)
 {
     uint32_t k = BLACK_K[b];
-    if (ui.keys_mode) {
-        mn_note_off(ui.track, ui.key_note[k]);
-        note_out(ui.track, 0, ui.key_note[k], 0);
+    if (ui.shift_keys >> k & 1u) {                   /* the shift layer's key */
+        ui.shift_keys &= ~(1u << k);
+        if (ui.key_used >> k & 1u)
+            return;
+        switch (b) {
+        case BK_MUTE: toggle_mute(ui.track); break;
+        case BK_COPY: copy_track(); break;
+        case BK_PASTE: paste_track(0); break;
+        default: break;
+        }
         return;
     }
-    if (ui.key_used >> k & 1u)
-        return;
-    switch (b) {
-    case BK_MUTE: toggle_mute(ui.track); break;
-    case BK_COPY: copy_track(); break;
-    case BK_PASTE: paste_track(0); break;
-    default: break;
+    if (ui.keys_mode && !kit_sel()) {
+        mn_note_off(ui.track, ui.key_note[k]);
+        note_out(ui.track, 0, ui.key_note[k], 0);
     }
 }
 
@@ -656,10 +817,13 @@ static void clear_pattern(int with_kit)
     char t[8];
     int i;
     mn_pat_clear(pat());
+    mn_drums_clear(drums());
     for (i = 0; i < MN_NT; i++)
         ui.last_note[i] = 60;
-    if (with_kit)
+    if (with_kit) {
         mn_kit_init(kit());
+        mn_drums_init(drums());
+    }
     mark_dirty();
     slot_name(sb.slot[buf_of(song())], t);
     say(with_kit ? "CLEARED+KIT" : "CLEARED", t);
@@ -836,9 +1000,20 @@ static void encoders(void)
                     ui.key_used |= 1u << WHITE_K[w];
                 }
             mark_dirty();
+        } else if (ui.view == PG_SYN && kit_sel()) {  /* the KIT: the voice's type */
+            uint8_t *t = &drums()->par[ui.voice][KV_TYPE];
+            char b[12];
+            *t = (uint8_t)((*t + (int)e % 8 + 8) % 8);
+            mn_kv_text(KV_TYPE, *t, b);
+            say("VOICE TYPE", b);
+            mark_dirty();
         } else if (ui.view == PG_SYN) {
-            int m = ((kit()->machine[ui.track] + (int)e) % MC_N + MC_N) % MC_N;
+            int m = kit()->machine[ui.track], k;
             char a[8] = {'T', (char)('1' + ui.track), ' ', 0};
+            for (k = 0; k < (e > 0 ? (int)e : -(int)e); k++)   /* (the synths' machines: the KIT is track 1's) */
+                do
+                    m = (m + (e > 0 ? 1 : MC_N - 1)) % MC_N;
+                while (m == MC_KIT);
             set_machine(ui.track, m);
             s_cpy(a + 3, mn_machine_name(m));
             say(a, mn_machine_long(m));
@@ -847,7 +1022,20 @@ static void encoders(void)
         }
     }
     if ((e = plat_enc(EN_PRESET)) != 0) {
-        if (ui.held && !ui.keys_mode) {               /* a step held: its note */
+        if (ui.held && !ui.keys_mode && kit_sel()) { /* the KIT: the voice's tune on the steps held */
+            int w, v = 64;
+            char a[8];
+            for (w = 0; w < NWHITE; w++)
+                if (ui.held >> w & 1u) {
+                    int s = step_of(w), c = mn_lock_get(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, KV_TUNE), s);
+                    v = clampi((c < 0 ? drums()->par[ui.voice][KV_TUNE] : c) + (int)e, 0, 127);
+                    mn_lock_set(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, KV_TUNE), s, v);
+                    ui.key_used |= 1u << WHITE_K[w];
+                }
+            mn_kv_text(KV_TUNE, v, a);
+            say("LOCK TUNE", a);
+            mark_dirty();
+        } else if (ui.held && !ui.keys_mode) {        /* a step held: its note */
             int w;
             char a[8];
             for (w = 0; w < NWHITE; w++)
@@ -939,7 +1127,7 @@ static void input(void)
             else
                 white_up((int)i);
         }
-    if (!ui.keys_mode && (keys >> BLACK_K[BK_PASTE] & 1u) && !(ui.key_used >> BLACK_K[BK_PASTE] & 1u) &&
+    if (!ui.keys_mode && (ui.shift_keys >> BLACK_K[BK_PASTE] & 1u) && !(ui.key_used >> BLACK_K[BK_PASTE] & 1u) &&
         now - ui.paste_t >= PASTE_HOLD_MS) {
         paste_track(1);                              /* PASTE held: the sound too */
         ui.key_used |= 1u << BLACK_K[BK_PASTE];
@@ -1030,6 +1218,43 @@ static int32_t chip(int32_t x, int32_t y, const char *s, uint16_t bg, uint16_t f
     cv_round(x, y, w, 16, 5, bg);
     cv_text(x + 5, y + 1, &FONT_XS, s, fg);
     return x + w;
+}
+
+/* the KIT: locks of the voice selected on a step; a row of the eleven voices (picked, with steps, hit) */
+static int kv_step_locks(int s)
+{
+    int r, n = 0;
+    for (r = 0; r < MN_NLOCK; r++) {
+        int q = pat()->lpar[r] - MN_NP;
+        n += pat()->ltrk[r] == MN_KIT_TRACK && q >= ui.voice * MN_KVP && q < (ui.voice + 1) * MN_KVP &&
+             pat()->lval[r][s & (MN_NSTEP - 1)] != 0xFF;
+    }
+    return n;
+}
+static int kv_has_steps(int v)
+{
+    int i;
+    for (i = 0; i < MN_NSTEP / 8; i++)
+        if (drums()->trig[v][i])
+            return 1;
+    return 0;
+}
+static void voice_row(int32_t x, int32_t y, int32_t cw, int names)
+{
+    int v;
+    uint16_t c = tcol(MN_KIT_TRACK);
+    for (v = 0; v < MN_NKV; v++) {
+        int sel = kit_sel() && v == ui.voice, has = kv_has_steps(v), muted = drums()->par[v][KV_MUTE] != 0;
+        uint16_t bg = sel ? c : has ? tdim(MN_KIT_TRACK, 6) : mix(C_BLACK, C_LINE, 12);
+        if (ui.kv_flash[v])
+            bg = mix(bg, C_WHITE, ui.kv_flash[v] * 3);
+        if (muted)
+            bg = mix(C_BLACK, C_LINE, 8);
+        cv_round(x + v * cw, y, cw - 2, names ? 15 : 8, 3, bg);
+        if (names)
+            text_c(x + v * cw + cw / 2 - 1, y, &FONT_XS, mn_kv_name(drums()->par[v][KV_TYPE]),
+                   sel ? C_BLACK : muted ? C_DIM : has ? C_WHITE : C_GRAY);
+    }
 }
 
 static void draw_header(void)
@@ -1297,6 +1522,35 @@ static void page_title(int view, const char *name, const char *sub)
         cv_round(232, 30 + r * 7, 6, 5, 2, r == ui.row[ui.view] ? PAGE_COL[view] : C_LINE);
 }
 
+static void draw_step_rec_kit(void)                 /* STEP REC on the KIT: the voices on the cursor's step */
+{
+    static const char *const SOFT[5] = {"NEXT", "--", "ACC", "--", "BACK"};
+    int s = ui.cursor % pat_len(), v, i;
+    char a[16], *e;
+    uint16_t c = tcol(MN_KIT_TRACK);
+    int32_t x = chip(4, 28, "STEP REC", C_REC, C_WHITE);
+    e = s_cpy(a, "STEP ");
+    e = itoa_u((uint32_t)s + 1u, e);
+    *e++ = '/';
+    itoa_u((uint32_t)pat_len(), e);
+    cv_text(x + 8, 28, &FONT_S, a, C_WHITE);
+    cv_text(236 - text_w(&FONT_XS, "PADS STACK"), 30, &FONT_XS, "PADS STACK", C_GRAY);
+    for (v = 0; v < MN_NKV; v++) {                   /* the eleven voices: lit when on the cursor's step */
+        int f = mn_kv_get(drums(), v, s);
+        int32_t bx = 4 + (v % 6) * 39, by = 50 + (v / 6) * 26;
+        cv_round(bx, by, 36, 22, 4, f ? ((f & MN_ACC) ? C_WHITE : c) : mix(C_BLACK, C_LINE, 12));
+        text_c(bx + 18, by + 3, &FONT_XS, mn_kv_name(drums()->par[v][KV_TYPE]), f ? C_BLACK : C_GRAY);
+    }
+    for (i = 0; i < 5; i++) {
+        static const char *const BTN_NAME[5] = {"FX", "SEL", "ENV", "LFO", "EDIT"};
+        int32_t bx = 4 + i * 47;
+        int on = i == 2 && (ui.arm & MN_ACC);
+        cv_round(bx, 108, 43, 20, 5, on ? c : mix(C_BLACK, C_LINE, 12));
+        text_c(bx + 21, 110, &FONT_XS, SOFT[i], on ? C_BLACK : SOFT[i][0] == '-' ? C_DIM : C_WHITE);
+        text_c(bx + 21, 129, &FONT_XS, BTN_NAME[i], C_DIM);
+    }
+}
+
 static void draw_step_rec(void)                     /* STEP REC: a note a step, on to the next */
 {
     int t = ui.track, s = ui.cursor % pat_len(), prev = (s + pat_len() - 1) % pat_len(), i, lo = 127, hi = 0;
@@ -1358,12 +1612,63 @@ static void draw_step_rec(void)                     /* STEP REC: a note a step, 
     }
 }
 
+static void draw_voice_page(void)                   /* the KIT's SYN / TRK pages: the voice selected's values */
+{
+    int base = kv_base(), r, i, hs = held_step(), hot = touch_fade();
+    const uint8_t *par = drums()->par[ui.voice];
+    uint16_t c = tcol(MN_KIT_TRACK);
+    char a[24], *e;
+    if (hs >= 0) {
+        e = s_cpy(a, "STEP ");
+        e = itoa_u((uint32_t)hs + 1u, e);
+        chip(4, 28, a, C_WHITE, C_BLACK);
+        e = s_cpy(a, "V");
+        e = itoa_u((uint32_t)ui.voice + 1u, e);
+        *e++ = ' ';
+        s_cpy(e, mn_kv_name(par[KV_TYPE]));
+        cv_text(70, 28, &FONT_B, a, mn_kv_get(drums(), ui.voice, hs) ? c : C_GRAY);
+        e = itoa_u((uint32_t)kv_step_locks(hs), a);
+        s_cpy(e, kv_step_locks(hs) == 1 ? " LOCK" : " LOCKS");
+        cv_text(234 - text_w(&FONT_XS, a), 29, &FONT_XS, a, C_WHITE);
+    } else {
+        int32_t x = chip(4, 28, base ? "MIX" : "VOICE", PAGE_COL[ui.view], C_BLACK);
+        e = s_cpy(a, "V");
+        e = itoa_u((uint32_t)ui.voice + 1u, e);
+        cv_text(x + 6, 28, &FONT_B, a, c);
+        voice_row(118, 30, 10, 0);
+        for (r = 0; r < 2; r++)
+            cv_round(232, 30 + r * 7, 6, 5, 2, r == ui.row[ui.view] ? PAGE_COL[ui.view] : C_LINE);
+    }
+    for (r = 0; r < 2; r++) {
+        int active = r == ui.row[ui.view];
+        int32_t y = 50 + r * 47;
+        if (active)
+            cv_round(2, y - 3, 236, 46, 5, tdim(MN_KIT_TRACK, 2));
+        for (i = 0; i < 4; i++) {
+            int kp = base + r * 4 + i, v = par[kp], lk = -1;
+            const mn_pinfo_t *in = mn_kv_info(kp);
+            char val[16];
+            if (hs >= 0)
+                lk = mn_lock_get(pat(), MN_KIT_TRACK, MN_KVPAR(ui.voice, kp), hs);
+            if (lk >= 0)
+                v = lk;
+            mn_kv_text(kp, v, val);
+            param_cell(i * 60, y, in->name, val, 44 * v / (in->max ? in->max : 1), in->kind == PK_BIP, active,
+                       active && ui.touched == i ? hot : 0, lk >= 0, c);
+        }
+    }
+}
+
 static void draw_track_page(void)
 {
     int t = ui.track, m = kit()->machine[t], pg = page_of_view(), r, i, hs = held_step(), hot = touch_fade();
     char a[24], *e;
     uint16_t c = tcol(t);
     const uint8_t *par = kit()->par[t];
+    if (kv_base() >= 0) {
+        draw_voice_page();
+        return;
+    }
     if (hs >= 0) {                                   /* a step held: its note and its locks */
         e = s_cpy(a, "STEP ");
         e = itoa_u((uint32_t)hs + 1u, e);
@@ -1384,7 +1689,7 @@ static void draw_track_page(void)
             sub = mn_machine_long(m);
         s_cpy(nm, mn_page_name(pg));
         page_title(ui.view, nm, sub);
-        switch (pg) {
+        switch (is_kit(t) && (pg == PG_AMP || pg == PG_FX) ? -1 : pg) {
         case PG_AMP: graph_env(150, 30, 76, 14, par, c); break;
         case PG_FILT: graph_filter(150, 30, 76, 14, par, c); break;
         case PG_FX: graph_delay(150, 30, 76, 14, par, c); break;
@@ -1418,7 +1723,11 @@ static void draw_track_page(void)
                 mn_dest_text(kit()->machine, t, par[p - L_DEST + L_TRK], v, val);
             else
                 mn_par_text(m, p, v, val);
-            param_cell(i * 60, y, in->name, val, 44 * v / mx, in->kind == PK_BIP, active,
+            if (is_kit(t) && kit_off(p)) {           /* (the KIT's voices have their own) */
+                s_cpy(val, "--");
+                v = 0;
+            }
+            param_cell(i * 60, y, in->name, val, 44 * v / mx, in->kind == PK_BIP, active && !(is_kit(t) && kit_off(p)),
                        active && ui.touched == i ? hot : 0, lk >= 0, c);
         }
     }
@@ -1487,10 +1796,13 @@ static void draw_home(void)
                 uint16_t c = C_LINE;
                 if (st >= p->len)
                     continue;
-                if (p->trig[t][st] & MN_TRIG)
-                    c = (mn_mute >> t & 1u) ? C_DIM : (p->trig[t][st] & MN_ACC) ? tcol(t) : tdim(t, 10);
-                if (st == mn_step)
-                    c = (p->trig[t][st] & MN_TRIG) ? C_WHITE : C_GRAY;
+                {
+                    int on = is_kit(t) ? mn_kv_any(drums(), st) : (p->trig[t][st] & MN_TRIG) != 0;
+                    if (on)
+                        c = (mn_mute >> t & 1u) ? C_DIM : (!is_kit(t) && (p->trig[t][st] & MN_ACC)) ? tcol(t) : tdim(t, 10);
+                    if (st == mn_step)
+                        c = on ? C_WHITE : C_GRAY;
+                }
                 cv_rect(x, y, 12, 5, c);
                 if (t == ui.track && s == 0)
                     cv_rect(2, y, 3, 5, tcol(t));
@@ -1555,6 +1867,23 @@ static void draw_main(void)
         ui.meter[t] = lv > ui.meter[t] ? lv : ui.meter[t] * 0.82f;   /* meters: up at once, down slowly */
         h = hash(h, (uint32_t)(ui.meter[t] * 60.0f) | (uint32_t)kit()->machine[t] << 8 | (uint32_t)ui.flash[t] << 12);
     }
+    for (i = 0; i < MN_NKV; i++) {                   /* the KIT's voices: a flash at each hit */
+        uint8_t kc = mn_kv_count[i];
+        ui.kv_flash[i] = kc != ui.kv_seen[i] ? 5 : ui.kv_flash[i] ? ui.kv_flash[i] - 1 : 0;
+        ui.kv_seen[i] = kc;
+        h = hash(h, (uint32_t)ui.kv_flash[i] << 4 | (uint32_t)i);
+    }
+    if (kit_sel()) {
+        const uint8_t *vp = drums()->par[ui.voice];
+        h = hash(h, ui.voice);
+        for (i = 0; i < MN_KVP; i += 4)
+            h = hash(h, (uint32_t)vp[i] | (uint32_t)vp[i + 1] << 8 | (uint32_t)vp[i + 2] << 16 | (uint32_t)vp[i + 3] << 24);
+        for (i = 0; i < MN_NKV; i++)
+            h = hash(h, (uint32_t)kv_has_steps(i) | (uint32_t)drums()->par[i][KV_MUTE] << 1 | (uint32_t)drums()->par[i][KV_TYPE] << 2);
+        if (step_rec())
+            for (i = 0; i < MN_NKV; i++)
+                h = hash(h, (uint32_t)mn_kv_get(drums(), i, ui.cursor));
+    }
     for (i = 0; i < 3; i++)                          /* the scopes: one value a frame */
         scope[i][scope_w] = mn_lfo_val[ui.track][i];
     scope_w = (uint8_t)((scope_w + 1u) % 48u);
@@ -1568,6 +1897,8 @@ static void draw_main(void)
             h = hash(h, (uint32_t)pat()->trig[ui.track][i] | (uint32_t)pat()->note[ui.track][i] << 8);
     }
     if (ui.view == V_HOME) {
+        for (i = 0; i < 16; i++)
+            h = hash(h, (uint32_t)mn_kv_any(drums(), ui.spage * 16 + i) << i);
         h = hash(hash(h, (uint32_t)(mn_step + 1) | (uint32_t)pat()->len << 8 | (uint32_t)pat()->swing << 16 |
                              (uint32_t)pat()->speed << 24), proj.tempo10 | (uint32_t)mn_lock_rows_free(pat()) << 16 |
                                                                 (uint32_t)pat()->root << 22 | (uint32_t)pat()->scale << 26 |
@@ -1587,7 +1918,8 @@ static void draw_main(void)
     if (held_step() >= 0) {
         int r;
         for (r = 0; r < MN_NLOCK; r++)
-            h = hash(h, (uint32_t)pat()->ltrk[r] << 8 | pat()->lval[r][held_step()]);
+            h = hash(h, (uint32_t)pat()->ltrk[r] << 8 | pat()->lval[r][held_step()] | (uint32_t)pat()->lpar[r] << 16);
+        h = hash(h, (uint32_t)mn_kv_get(drums(), ui.voice, held_step()));
         h = hash(h, (uint32_t)pat()->note[ui.track][held_step()] | (uint32_t)pat()->trig[ui.track][held_step()] << 8);
     }
     if (h == ui.sig[1])
@@ -1595,7 +1927,9 @@ static void draw_main(void)
     ui.sig[1] = h;
     cv_begin(240, MAIN_H, C_BLACK);
     draw_tracks();
-    if (view_is_track() && step_rec())
+    if (view_is_track() && step_rec() && kit_sel())
+        draw_step_rec_kit();
+    else if (view_is_track() && step_rec())
         draw_step_rec();
     else if (view_is_track())
         draw_track_page();
@@ -1610,7 +1944,7 @@ static void draw_steps(void)
 {
     mn_pat_t *p = pat();
     int t = ui.track, w, len = pat_len(), pages = (len + 15) / 16, cur_page = mn_step >= 0 ? mn_step / 16 : -1;
-    int lo = 127, hi = 0, melodic = kit()->machine[t] != MC_DRUM, pulse;
+    int lo = 127, hi = 0, melodic = kit()->machine[t] != MC_DRUM && !is_kit(t), pulse, kit = is_kit(t);
     uint32_t now = plat_ms(), h;
     uint16_t c = tcol(t);
     char a[24], *e;
@@ -1625,6 +1959,12 @@ static void draw_steps(void)
                               (uint32_t)pulse << 29 | (uint32_t)step_rec() << 30);
     h = hash(h, ui.held | (uint32_t)ui.cursor << 20 | (uint32_t)(step_rec() && blink()) << 28 | (uint32_t)p->scale << 16);
     h = hash(h, (uint32_t)p->root | (uint32_t)p->snap << 4 | ui.keys << 5);
+    h = hash(h, (uint32_t)ui.voice | (uint32_t)shift_held() << 4 | ui.shift_keys << 5);
+    if (kit)
+        for (w = 0; w < 16; w++)
+            h = hash(h, (uint32_t)mn_kv_get(drums(), ui.voice, ui.spage * 16 + w) | (uint32_t)kv_step_locks(ui.spage * 16 + w) << 4);
+    for (w = 0; w < MN_NKV; w++)
+        h = hash(h, (uint32_t)ui.kv_flash[w] | (uint32_t)kv_has_steps(w) << 4 | (uint32_t)w << 8);
     for (w = 0; w < len; w++) {
         if (p->trig[t][w] & MN_TRIG) {
             lo = p->note[t][w] < lo ? p->note[t][w] : lo;
@@ -1647,7 +1987,7 @@ static void draw_steps(void)
     for (w = 0; w < 16; w++) {
         int s = ui.spage * 16 + w;
         int32_t x = 6 + w * 14 + (w / 4) * 2;
-        uint8_t f = p->trig[t][s];
+        uint8_t f = kit ? (uint8_t)mn_kv_get(drums(), ui.voice, s) : p->trig[t][s];
         uint16_t bg = (w / 4) & 1 ? mix(C_LINE, C_BLACK, 4) : C_LINE;   /* (beats: every other four a shade darker) */
         if (s >= len) {
             cv_rect(x, 26, 12, 2, C_LINE);
@@ -1666,7 +2006,7 @@ static void draw_steps(void)
         }
         if (f & MN_SLIDE)
             cv_rect(x - 4, 14, 6, 3, C_WHITE);       /* a slide: a bridge from the step before */
-        if (mn_step_locks(p, t, s))
+        if (kit ? kv_step_locks(s) : mn_step_locks(p, t, s))
             cv_round(x + 4, 8, 4, 4, 2, (f & MN_TRIG) ? C_BLACK : C_WHITE);
         if (s == mn_step)                            /* the step playing: a bar under it */
             cv_rect(x, 31, 12, 3, C_WHITE);
@@ -1695,7 +2035,20 @@ static void draw_steps(void)
         *e++ = '/';
         itoa_u((uint32_t)len, e);
         cv_text(x, 43, &FONT_XS, a, C_DIM);
-        if (ui.keys_mode) {
+        if (shift_held()) {                          /* SEQ held: the shift layer on the black keys */
+            int b;
+            int32_t bx = 234;
+            for (b = NBLACK - 1; b >= 0; b--) {
+                int on = ui.shift_keys >> BLACK_K[b] & 1u;
+                bx -= text_w(&FONT_XS, BK_NAME[b]) + 3;
+                cv_text(bx, 43, &FONT_XS, BK_NAME[b], on ? C_WHITE : b < MN_NT ? tcol(b) : C_GRAY);
+            }
+        } else if (!ui.keys_mode || kit_sel()) {     /* the KIT's eleven voices, on the black keys */
+            int32_t cw = (234 - (x + text_w(&FONT_XS, a) + 6)) / MN_NKV;
+            cw = cw > 11 ? 11 : cw;
+            if (cw >= 6)
+                voice_row(234 - MN_NKV * cw, 44, cw, 0);
+        } else if (ui.keys_mode) {
             e = s_cpy(a, NOTE_NAME[p->root % 12]);
             *e++ = ' ';
             e = s_cpy(e, mn_scale_name(p->scale));
@@ -1708,14 +2061,6 @@ static void draw_steps(void)
                 *e++ = '-';
             itoa_u((uint32_t)(ui.octave < 0 ? -ui.octave : ui.octave), e);
             cv_text(234 - text_w(&FONT_XS, a), 43, &FONT_XS, a, c);
-        } else {
-            int b;
-            int32_t bx = 234;
-            for (b = NBLACK - 1; b >= MN_NT; b--) {   /* the black keys' tools, as a reminder */
-                int on = ui.keys >> BLACK_K[b] & 1u;
-                bx -= text_w(&FONT_XS, BK_NAME[b]) + 4;
-                cv_text(bx, 43, &FONT_XS, BK_NAME[b], on ? C_WHITE : C_DIM);
-            }
         }
     }
     cv_blit(0, FTR_Y);
@@ -1743,7 +2088,7 @@ static void leds(void)
         b |= ui.keys_mode && ui.octave < 0 ? 1u << B_OCTDN : 1u << B_OCTUP;
     if (ui.ask && blink())
         b |= 1u << B_SAVE;
-    if (ui.keys_mode) {                              /* the keys held lit; the scale's keys dim, its roots lit */
+    if (ui.keys_mode && !kit_sel()) {                /* the keys held lit; the scale's keys dim, its roots lit */
         mn_pat_t *p = pat();
         k = ui.keys;
         for (w = 0; w < NKEYS; w++) {
@@ -1753,17 +2098,8 @@ static void leds(void)
             else if (p->scale && mn_in_scale(p->scale, p->root, n))
                 d |= 1u << w;
         }
-    } else {
-        for (w = 0; w < NWHITE; w++) {
-            int s = step_of(w), on = s < pat_len() && (pat()->trig[ui.track][s] & MN_TRIG);
-            if (s == mn_step)
-                on = !on;                            /* the step playing: the other way round */
-            if (on)
-                k |= 1u << WHITE_K[w];
-            else if (s < pat_len() && mn_step_locks(pat(), ui.track, s))
-                d |= 1u << WHITE_K[w];
-        }
-        for (t = 0; t < MN_NT; t++) {                /* the track selected lit, the others dim (muted: dark) */
+    } else if (shift_held()) {                       /* the shift layer: the tracks and the tools */
+        for (t = 0; t < MN_NT; t++) {
             if (t == ui.track)
                 k |= 1u << BLACK_K[t];
             else if (!(mn_mute >> t & 1u))
@@ -1773,6 +2109,25 @@ static void leds(void)
                         1u << BLACK_K[BK_COPY] | 1u << BLACK_K[BK_PASTE]);
         if (mn_mute)
             d |= 1u << BLACK_K[BK_MUTE];
+    } else {
+        if (!ui.keys_mode)
+            for (w = 0; w < NWHITE; w++) {
+                int s = step_of(w), on = s < pat_len() && (kit_sel() ? mn_kv_get(drums(), ui.voice, s) != 0
+                                                                      : (pat()->trig[ui.track][s] & MN_TRIG) != 0);
+                if (s == mn_step)
+                    on = !on;                        /* the step playing: the other way round */
+                if (on)
+                    k |= 1u << WHITE_K[w];
+                else if (s < pat_len() && (kit_sel() ? kv_step_locks(s) : mn_step_locks(pat(), ui.track, s)))
+                    d |= 1u << WHITE_K[w];
+            }
+        for (t = 0; t < MN_NKV; t++) {               /* the KIT's voices: the one picked lit, a hit flashes, with steps dim */
+            if ((kit_sel() && t == ui.voice) || ui.kv_flash[t])
+                k |= 1u << BLACK_K[t];
+            else if (kv_has_steps(t) && !drums()->par[t][KV_MUTE])
+                d |= 1u << BLACK_K[t];
+        }
+        k |= ui.keys_mode ? ui.keys : 0u;
     }
     plat_leds(b, k, d);
 }

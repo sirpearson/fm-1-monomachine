@@ -2,17 +2,16 @@
 wait 300
 tap SEQ
 expect keys 1
-tapkey b3
 expect track 0
-turn SELECT 3
-expect track 3
-# play a note: track 4 (SAW) sounds
+turn SELECT 1
+expect track 1
+# play a note: track 2 (ACID) sounds
 peakreset
 key 7 down
 wait 200
 expect peak_db_min -30
 key 7 up
-expect notes3 1
+expect notes1 1
 tap OCT+
 expect octave 1
 tap OCT-
@@ -22,20 +21,21 @@ tap OCT+
 # step entry: REC, stopped; every key goes on the next step
 tap REC
 expect rec 1
-# clear track 4 first (GRID: COPY held + PASTE)
-tap SEQ
+# clear track 2 first (SEQ held: CPY held + PST; SEQ was a shift, still KEYS)
+press SEQ
 key b9 down
 tapkey b10
 key b9 up
-tap SEQ
+release SEQ
+expect keys 1
 tapkey 0
 tapkey 2
 tapkey 4
-expect trig3_0 1
-expect note3_0 53
-expect note3_1 55
-expect note3_2 57
-expect trig3_3 0
+expect trig1_0 1
+expect note1_0 53
+expect note1_1 55
+expect note1_2 57
+expect trig1_3 0
 shot stepentry.png
 # live recording: playing, a note goes on the step it falls on (PLAY acts on the press: 80 ms + 560 =
 # 5.1 steps; and one later in a step goes on the next one)
@@ -45,10 +45,10 @@ tapkey 12
 wait 50
 tapkey 14
 wait 200
-expect trig3_5 1
-expect note3_5 65
-expect trig3_6 1
-expect note3_6 67
+expect trig1_5 1
+expect note1_5 65
+expect trig1_6 1
+expect note1_6 67
 # the knobs as locks on the trigs, playing with REC
 tap ENV
 wait 1400

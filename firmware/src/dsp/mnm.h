@@ -15,6 +15,9 @@
  *            any value of any track set for one step (MN_NLOCK lock rows a pattern). A lock on a step
  *            without a trig changes the sound without playing a note (a trigless lock). Length, speed
  *            and swing are the pattern's; the tempo is global.
+ *   KIT      track 1 is a drum kit: MN_NKV voices (one per black key), each a drum of its own with its
+ *            values (mn_kv_info) and its steps, through the track's strip (filters, distortion, EQ,
+ *            sample-rate reduction, delay) in stereo. Its locks address the voices' values too (MN_KVPAR).
  *   SONG     what a slot in flash holds: a kit and a pattern. The one playing can be replaced by
  *            another at the end of its pattern (mn_queue).
  *
@@ -45,7 +48,9 @@ enum {
 enum { L_TRK, L_DEST, L_WAVE, L_TRIG, L_MULT, L_SPD, L_PHAS, L_DPTH };   /* an LFO's eight */
 #define MN_NMOD 56                      /* LFO destinations: every value but the TRK page's */
 
-enum { MC_SAW, MC_PULSE, MC_ENS, MC_SID, MC_FM, MC_FMDYN, MC_WAVE, MC_DRUM, MC_NOISE, MC_PLUCK, MC_SINE, MC_ACID, MC_N };
+enum { MC_SAW, MC_PULSE, MC_ENS, MC_SID, MC_FM, MC_FMDYN, MC_WAVE, MC_DRUM, MC_NOISE, MC_PLUCK, MC_SINE, MC_ACID, MC_KIT,
+       MC_N };
+#define MN_KIT_TRACK 0                  /* track 1 is the KIT (MC_KIT), and only it: tracks 2..6 are synths */
 enum { LW_TRI, LW_SIN, LW_SQR, LW_SAW, LW_RAMP, LW_EXP, LW_RND, LW_N };
 enum { LT_FREE, LT_TRIG, LT_HOLD, LT_ONE, LT_HALF, LT_N };
 enum { ARP_OFF, ARP_UP, ARP_DOWN, ARP_UPDN, ARP_RAND, ARP_N };
@@ -88,20 +93,47 @@ typedef struct {
     uint8_t snap;                       /* 1: a key out of the scale plays the nearest note in it */
     uint8_t rsv2;
 } mn_pat_t;
+/* the drum kit of track 1: its voices' values (the kit's) and steps (the pattern's), steps as bits */
+#define MN_NKV 11                       /* voices: one per black key */
+#define MN_KVP 16                       /* values per voice */
+enum { KV_TYPE, KV_TUNE, KV_DCAY, KV_TONE, KV_PDEC, KV_PAMT, KV_NOIS, KV_SNAP,      /* the SYN page */
+       KV_LEVL, KV_PAN, KV_DSND, KV_PROB, KV_ACNT, KV_CHOK, KV_RTRG, KV_MUTE };     /* the TRK page */
+#define MN_KVPAR(v, p) (MN_NP + (v) * MN_KVP + (p))   /* a voice's value as a lock row's value (64..239) */
+typedef struct {
+    uint8_t par[MN_NKV][MN_KVP];
+    uint8_t trig[MN_NKV][MN_NSTEP / 8];  /* bit s & 7 of byte s >> 3 */
+    uint8_t acc[MN_NKV][MN_NSTEP / 8];
+} mn_drums_t;
 #define MN_SONG_MAGIC 0x314D4E4Du        /* "MNM1" */
-#define MN_SONG_FORMAT 2u
-#define MN_SONG_SIZE_V1 (sizeof(mn_song_t) - 4u)   /* a format 1 song: the same, without the scale */
+#define MN_SONG_FORMAT 3u
 typedef struct {
     uint32_t magic, format;
     mn_kit_t kit;
     mn_pat_t pat;
+    mn_drums_t drums;                   /* format 3 */
 } mn_song_t;
+#define MN_SONG_SIZE_V2 (sizeof(mn_song_t) - sizeof(mn_drums_t))   /* format 2: without the kit's drums */
+#define MN_SONG_SIZE_V1 (MN_SONG_SIZE_V2 - 4u)                      /* format 1: without the scale either */
+
+/* the drum kit */
+const mn_pinfo_t *mn_kv_info(int p);
+void mn_kv_text(int p, int v, char *buf);
+const char *mn_kv_name(int type);                         /* "BD", "SD", "HC" ... (3 bytes) */
+void mn_drums_init(mn_drums_t *d);                        /* the default voices, no steps */
+void mn_drums_clear(mn_drums_t *d);                       /* no steps (the voices stay) */
+int mn_kv_get(const mn_drums_t *d, int v, int step);      /* 0, MN_TRIG, or MN_TRIG | MN_ACC */
+void mn_kv_put(mn_drums_t *d, int v, int step, int flags);
+int mn_kv_any(const mn_drums_t *d, int step);             /* a voice plays on the step */
+void mn_kit_hit(int v, int vel, int semis);               /* live: a pad (a black key, MIDI), semitones from its tune */
+extern volatile uint8_t mn_kv_count[MN_NKV];              /* +1 for each hit of a voice (UI) */
+int mn_kv_note(int v);                                    /* the voice's MIDI note (GM drums: 36 BD, 38 SD ...) */
+int mn_kv_of_note(int note);                              /* the voice a MIDI note plays, -1 none */
 
 void mn_kit_init(mn_kit_t *k);                            /* the default kit */
 void mn_track_init(mn_kit_t *k, int t, int machine);      /* one track: the machine and its defaults */
 void mn_machine_set(mn_kit_t *k, int t, int machine);     /* the machine, and its SYN page's defaults */
 void mn_pat_clear(mn_pat_t *p);
-void mn_song_init(mn_song_t *s);                          /* the default kit, an empty pattern */
+void mn_song_init(mn_song_t *s);                          /* the default kit and drums, an empty pattern */
 void mn_song_demo(mn_song_t *s);                          /* the default kit and a beat to start from */
 int mn_song_valid(mn_song_t *s);                          /* magic and format; values out of range fixed: 1 */
 int mn_song_load_size(mn_song_t *s, int bytes);           /* a song of `bytes` read from flash: valid (1)? An older
@@ -117,6 +149,7 @@ int mn_scale_move(int scale, int root, int note, int steps);   /* steps up / dow
 int mn_lock_get(const mn_pat_t *p, int t, int par, int step);
 int mn_lock_set(mn_pat_t *p, int t, int par, int step, int v);   /* 0, or -1: every row is in use */
 void mn_lock_clear_step(mn_pat_t *p, int t, int step);           /* every lock of track t on the step */
+void mn_lock_clear(mn_pat_t *p, int t, int par, int step);       /* one value's lock on the step */
 void mn_lock_clear_track(mn_pat_t *p, int t);
 int mn_step_locks(const mn_pat_t *p, int t, int step);            /* how many values the step locks */
 int mn_lock_rows_free(const mn_pat_t *p);

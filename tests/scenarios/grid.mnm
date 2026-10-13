@@ -1,13 +1,20 @@
-# GRID: steps on / off, locks by holding a step and turning, note and octave of a step, accent, slide
+# GRID on a synth track: steps on / off, locks by holding a step and turning, note and octave of a step,
+# accent, slide; the shift layer (SEQ held + a black key): tracks, mute, copy / paste / clear, accent, slide
 wait 300
-# a new track to work on: track 6 (ENS), clear it (COPY held + PASTE)
+# track 6 (PLUK), with the shift layer; SEQ was a shift: still GRID after it
+press SEQ
 tapkey b5
+release SEQ
 expect track 5
+expect keys 0
+# clear it: SEQ held, CPY held + PST
+press SEQ
 key b9 down
 tapkey b10
 key b9 up
+release SEQ
 expect trig5_0 0
-expect trig5_8 0
+expect keys 0
 # a step on, then off
 tapkey w3
 expect trig5_3 1
@@ -18,22 +25,20 @@ tapkey w3
 # hold step 4 and turn knob 1 on the AMP page: a lock on ATK
 tap ENV
 key w3 down
-spin K1 20
+spin K1 30
 key w3 up
-expect lock5_8_3 90
+expect lock5_8_3 30
 expect trig5_3 1
-expect par5_8 70
+expect par5_8 0
 # the knob without a step held changes the kit
-spin K1 -10
-expect par5_8 60
-expect lock5_8_3 90
+spin K1 10
+expect par5_8 10
+expect lock5_8_3 30
 shot lock.png
-# hold the step: the page shows its locks
 key w3 down
 wait 50
 shot lockview.png
-# its note up seven steps of the pattern's scale (PRESETS; the demo is in C minor: C4 -> C5), an octave
-# down (ALGORITHM)
+# its note up seven steps of the pattern's scale (PRESETS; C minor: C4 -> C5), an octave down (ALGORITHM)
 spin PRESET 7
 spin ALGO -1
 key w3 up
@@ -42,64 +47,79 @@ key w3 down
 spin PRESET 1
 key w3 up
 expect note5_3 62
-expect trig5_3 1
-# two steps held: one turn locks both
+# two steps held: one turn locks both (no trig on them: trigless locks)
 key w5 down
 key w6 down
-spin K2 -27
+spin K2 40
 key w5 up
 key w6 up
-expect lock5_9_5 100
-expect lock5_9_6 100
-# (no trig on them: trigless locks)
+expect lock5_9_5 40
+expect lock5_9_6 40
 expect trig5_5 0
 expect trig5_6 0
-# accent and slide (ACC / SLD held + a step)
+# accent and slide (SEQ + ACC / SLD held + a step)
+press SEQ
 key b7 down
 tapkey w5
 key b7 up
+release SEQ
 expect trig5_5 3
+press SEQ
 key b8 down
 tapkey w6
 key b8 up
+release SEQ
 expect trig5_6 5
 # a step off clears its locks
 tapkey w3
 expect trig5_3 0
 expect lock5_8_3 -1
-# mute: track 6 (MUTE held + track key), then the track selected (MUTE tapped)
+# mute: track 6 (SEQ + MUT held + its key), then the track selected (SEQ + MUT tapped)
+press SEQ
 key b6 down
 tapkey b5
 key b6 up
+release SEQ
 expect mute 32
+press SEQ
 tapkey b6
+release SEQ
 expect mute 0
-tapkey b0
-expect track 0
+press SEQ
+tapkey b1
+release SEQ
+expect track 1
+press SEQ
 tapkey b6
-expect mute 1
+release SEQ
+expect mute 2
+press SEQ
 tapkey b6
+release SEQ
 expect mute 0
-# copy track 1, paste it on track 5
+# copy track 2 (ACID), paste it on track 5; PST held: the sound too
+press SEQ
 tapkey b9
 tapkey b4
 tapkey b10
-expect trig4_0 1
-expect trig4_4 1
-expect machine4 4
-# PASTE held: the sound too
+release SEQ
+expect track 4
+expect trig4_0 3
+expect machine4 6
+press SEQ
 key b10 down
 wait 900
 key b10 up
-expect machine4 7
-expect par4_1 0
-# the machine with ALGORITHM (SYN page)
+release SEQ
+expect machine4 11
+# the machine with ALGORITHM (SYN page): the KIT is track 1's alone, skipped
 tap EDIT
 expect view 0
 turn ALGO 1
-expect machine4 8
+expect machine4 0
 turn ALGO -2
-expect machine4 6
+expect machine4 10
 shot machine.png
+expect keys 0
 expect dirty 1
 expect dropped 0

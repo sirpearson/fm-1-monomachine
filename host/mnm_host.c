@@ -22,6 +22,7 @@
  *                                (WHAT: view row track keys rec playing step slot queued dirty mute
  *                                 store_writes midi_out dropped tempo len swing speed locksfree
  *                                 machineT parT_P trigT_S noteT_S lockT_P_S notesT (notes track T played)
+ *                                 voice kvV_S (KIT voice V's step S) kvparV_P kvlockV_P_S kvhitsV
  *                                 litkeys dimkeys litbtn peak_db_max peak_db_min)
  *   reboot                       re-run boot from the simulated flash (persistence test)
  */
@@ -395,6 +396,18 @@ static int expect(const char *what, const char *val)
         got = ui.octave;
     else if (!strcmp(what, "ext"))
         got = mn_ext;
+    else if (!strcmp(what, "voice"))
+        got = ui.voice;
+    else if (sscanf(what, "kvpar%d_%d", &a, &b) == 2)
+        got = drums()->par[a % MN_NKV][b % MN_KVP];
+    else if (sscanf(what, "kvlock%d_%d_%d", &a, &b, &c) == 3)
+        got = mn_lock_get(pat(), MN_KIT_TRACK, MN_KVPAR(a % MN_NKV, b % MN_KVP), c % MN_NSTEP);
+    else if (sscanf(what, "kvhits%d", &a) == 1) {    /* hits of KIT voice a since the last ask */
+        static uint8_t seen[MN_NKV];
+        got = (uint8_t)(mn_kv_count[a % MN_NKV] - seen[a % MN_NKV]);
+        seen[a % MN_NKV] = mn_kv_count[a % MN_NKV];
+    } else if (sscanf(what, "kv%d_%d", &a, &b) == 2)
+        got = mn_kv_get(drums(), a % MN_NKV, b % MN_NSTEP);
     else if (!strncmp(what, "machine", 7))
         got = kit()->machine[atoi(what + 7) % MN_NT];
     else if (sscanf(what, "par%d_%d", &a, &b) == 2)
