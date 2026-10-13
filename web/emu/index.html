@@ -1,0 +1,530 @@
+<title>MNM-1 Emulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Semi+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: the FM-1 drawn full width as the page's one object; the controls' reference sits under it
+   in two to three columns. The device keeps its own graphite look in both themes; the page around it
+   follows the viewer's theme. */
+:root {
+  --ground: #eceef0;          /* the bench the device sits on */
+  --ink: #1d2126;
+  --muted: #5c6670;
+  --rule: #cfd4d9;
+  --card: #f7f8f9;
+  --signal: #2f9e5a;          /* the screen's green, the accent */
+  --signal-ink: #0f3d22;
+  --display: "Saira Semi Condensed", "Arial Narrow", Arial, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ground: #15181b; --ink: #e6e9ec; --muted: #9aa4ad; --rule: #2c3237; --card: #1d2125;
+    --signal: #50dc78; --signal-ink: #062312; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --ground: #15181b; --ink: #e6e9ec; --muted: #9aa4ad; --rule: #2c3237; --card: #1d2125;
+  --signal: #50dc78; --signal-ink: #062312; color-scheme: dark; }
+
+[hidden] { display: none !important; }
+body { background: var(--ground); color: var(--ink); margin: 0; padding-inline: 16px; padding-block: 24px 48px;
+       font: 400 16px/1.55 var(--body); }
+main { max-width: 1060px; margin: 0 auto; display: grid; gap: 1rem; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem 1rem; }
+h1 { font: 700 2rem/1.1 var(--display); margin: 0; letter-spacing: .02em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); }
+
+.device { position: relative; width: 100%; max-width: 100%; aspect-ratio: 1000 / 640; user-select: none; -webkit-user-select: none;
+          touch-action: manipulation; }
+.device svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.device canvas { position: absolute; left: 30.6%; top: 7.5%; width: 21.6%; height: 33.75%; image-rendering: pixelated;
+                 background: #000; border-radius: 3px; }
+.hit { position: absolute; touch-action: none; cursor: pointer; border-radius: 10px; }
+.hit.knob { cursor: ns-resize; border-radius: 50%; }
+.hit:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.btnface, .keyface { transition: fill .05s; }
+.lit .btnface { fill: #5ee089; }
+.lit text { fill: #0b2414; }
+.held .btnface, .held .keyface { stroke: #ffd36a; stroke-width: 3; }
+.latched .btnface, .latched .keyface { stroke: #6fc3ff; stroke-width: 4; }
+.lit .keyface.white { fill: #9cf0b6; }
+.lit .keyface.black { fill: #5ee089; }
+.dim .keyface.white { fill: #d7eadc; }
+.dim .keyface.black { fill: #2f6a44; }
+.start { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(8, 10, 12, .55); border-radius: 4.4% / 6.9%; }
+.start button { font: 700 1.25rem var(--display); letter-spacing: .06em; padding: .7em 1.8em; border-radius: 999px; border: 0;
+                background: #5ee089; color: #0b2414; cursor: pointer; }
+.start button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+.bar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; color: var(--muted); font-size: .95rem; }
+.bar button { font: 600 .95rem var(--body); color: var(--ink); background: var(--card); border: 1px solid var(--rule);
+              border-radius: 8px; padding: .3em .8em; cursor: pointer; }
+.bar button:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.bar .state { font-variant-numeric: tabular-nums; }
+.bar .state b { color: var(--ink); font-weight: 600; }
+.confirm { display: inline-flex; gap: .5rem; align-items: center; }
+
+.ref { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.2rem 2rem; margin-top: .6rem; }
+.ref section { min-width: 0; }
+.ref h2 { font: 600 1.15rem var(--display); letter-spacing: .03em; margin: 0 0 .35rem; }
+.ref ul { margin: 0; padding-left: 1.1rem; color: var(--muted); }
+.ref li { margin: .15rem 0; }
+.ref li b { color: var(--ink); font-weight: 600; }
+.ref p { margin: 0 0 .4rem; color: var(--muted); max-width: 62ch; }
+kbd { font: 500 .8em var(--mono); background: var(--card); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .3em; color: var(--ink); }
+.note { color: var(--muted); font-size: .92rem; border-top: 1px solid var(--rule); padding-top: .8rem; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { .btnface, .keyface { transition: none; } }
+</style>
+
+<main>
+<header>
+  <h1>MNM-1</h1>
+  <p>Il firmware stile Monomachine per l'M-VAVE FM-1, che gira nel browser dallo stesso codice C.</p>
+</header>
+
+<div class="device" id="device">
+  <svg id="panel" viewBox="0 0 1000 640" aria-hidden="true"></svg>
+  <canvas id="screen" width="240" height="240" aria-label="Lo schermo dell'FM-1"></canvas>
+  <div class="start" id="start"><button id="go" type="button">Accendi</button></div>
+</div>
+
+<div class="bar">
+  <span class="state" id="status">Spento. Il suono parte quando lo accendi.</span>
+  <span class="state" id="load"></span>
+  <button id="midi" type="button">Collega MIDI</button>
+  <span id="midistat"></span>
+  <button id="reset" type="button">Reset di fabbrica</button>
+  <span class="confirm" id="resetask" hidden>Cancella tutti i pattern salvati?
+    <button id="resetyes" type="button">Cancella</button><button id="resetno" type="button">Annulla</button></span>
+</div>
+
+<div class="ref">
+  <section>
+    <h2>Per iniziare</h2>
+    <ul>
+      <li><b>PLAY</b> (<kbd>Spazio</kbd>) suona la demo nello slot A01.</li>
+      <li><b>EDIT ENV SEL FX LFO ARP</b>: le pagine della traccia; premi di nuovo per i valori 5–8.</li>
+      <li><b>SELECT</b> sceglie la traccia, <b>ALGORITHM</b> la macchina (pagina SYN), <b>PRESETS</b> il pattern.</li>
+      <li>Manopole: trascina in verticale o usa la rotella.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Step e parameter lock</h2>
+    <ul>
+      <li>Modo <b>GRID</b> (SEQ acceso): i 16 tasti bianchi sono gli step.</li>
+      <li>Per un <b>lock</b> tieni premuto il tasto del computer di uno step (es. <kbd>W</kbd>) e gira una manopola con la rotella.</li>
+      <li>Con il mouse: <kbd>Shift</kbd>+clic (o tasto destro) blocca premuto un tasto o un pulsante; ripeti per rilasciarlo.</li>
+      <li>Neri: tracce 1–6, poi MUT, ACC, SLD, CPY, PST.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Tastiera del computer</h2>
+    <ul>
+      <li>Step 1–8 <kbd>Q</kbd>…<kbd>I</kbd>, step 9–16 <kbd>A</kbd>…<kbd>K</kbd></li>
+      <li>Tasti neri <kbd>1</kbd>…<kbd>0</kbd> e <kbd>-</kbd></li>
+      <li><kbd>Spazio</kbd> PLAY, <kbd>Invio</kbd> REC, <kbd>Z</kbd>/<kbd>X</kbd> OCT−/OCT+, <kbd>Esc</kbd> SEQ</li>
+      <li><kbd>↑</kbd>/<kbd>↓</kbd> traccia</li>
+    </ul>
+  </section>
+</div>
+
+<p class="note">Questo è il firmware vero: motore audio, sequencer, interfaccia e salvataggio compilati in WebAssembly e
+  alimentati da un FM-1 simulato, con l'orologio guidato dall'audio come sul dispositivo. I pattern salvati restano in
+  questo browser. Il carico mostrato è quello del tuo computer, non dell'FM-1. Il MIDI funziona dove il browser lo
+  permette (Chrome o Edge, aprendo il file <code>MNM-1.html</code> in locale).</p>
+</main>
+
+<script>
+"use strict";
+const WASM_B64 = "__WASM_B64__";
+const NS = "http://www.w3.org/2000/svg";
+const BTN = { FX: 0, SEL: 1, ENV: 2, LFO: 3, EDIT: 4, GLO: 5, HOME: 6, SAVE: 7, ARP: 8, SEQ: 9, PLAY: 10, REC: 11, "OCT-": 12, "OCT+": 13 };
+const ENC = { SELECT: 0, ALGORITHM: 1, PRESETS: 2, KNOB1: 3, KNOB2: 4, KNOB3: 5, KNOB4: 6 };
+const WHITE_K = [0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26];
+const BLACK_K = [1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25];
+const BLACK_AFTER = [0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14];
+const BLACK_NAME = ["1", "2", "3", "4", "5", "6", "MUT", "ACC", "SLD", "CPY", "PST"];
+const BODY = "#33373c", TRAY = "#232629", KEY_W = "#d6d8db", KEY_B = "#bfc2c6", KNOB = "#1b1d20", BTNC = "#2b2e32", LABEL = "#e6e8ea";
+const STORE_KEY = "mnm1-emu-store";
+
+const svg = document.getElementById("panel");
+function el(tag, attrs, parent = svg) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.appendChild(e);
+  return e;
+}
+function text(parent, x, y, s, size, fill = LABEL) {
+  const t = el("text", { x, y, "text-anchor": "middle", "font-family": "'Saira Semi Condensed', 'Arial Narrow', Arial, sans-serif",
+                         "font-size": size, "font-weight": 600, fill, "letter-spacing": ".05em" }, parent);
+  t.textContent = s;
+  return t;
+}
+
+// ---------------------------------------------------------------- the panel (FiMba-1's drawing of the FM-1)
+el("rect", { x: 4, y: 4, width: 992, height: 632, rx: 44, fill: BODY });
+const knobs = {};
+function knob(x, y, r, label, role, sub) {
+  const g = el("g", {});
+  el("circle", { cx: x, cy: y, r: r + 5, fill: TRAY }, g);
+  el("circle", { cx: x, cy: y, r, fill: KNOB, stroke: "#45494e", "stroke-width": 2 }, g);
+  const ind = el("line", { x1: x, y1: y - r + 5, x2: x, y2: y - r + 15, stroke: LABEL, "stroke-width": 3, "stroke-linecap": "round" }, g);
+  text(g, x, y - r - 12, label, 16);
+  if (sub) text(g, x, y + r + 22, sub, 12, "#9aa4ad");
+  knobs[label] = { g, ind, x, y, r, angle: 0, role, label };
+}
+knob(105, 100, 24, "MASTER", "master", "VOLUME");
+knob(215, 100, 24, "SELECT", ENC.SELECT, "TRACCIA");
+knob(105, 205, 24, "PRESETS", ENC.PRESETS, "PATTERN");
+knob(215, 205, 24, "ALGORITHM", ENC.ALGORITHM, "MACCHINA");
+for (let i = 0; i < 4; i++) knob(610 + i * 104, 100, 22, `KNOB${i + 1}`, ENC[`KNOB${i + 1}`]);
+
+const buttons = {};
+function button(x, y, w, h, label, sub) {
+  const g = el("g", {});
+  el("rect", { x, y, width: w, height: h, rx: 9, fill: BTNC, stroke: "#4a4e53", "stroke-width": 1.5, class: "btnface" }, g);
+  text(g, x + w / 2, y + h / 2 + (sub ? 0 : 5), label, 15);
+  if (sub) text(g, x + w / 2, y + h / 2 + 14, sub, 10, "#9aa4ad");
+  buttons[label] = { g, bit: BTN[label], label };
+}
+el("rect", { x: 58, y: 258, width: 210, height: 58, rx: 14, fill: TRAY });
+button(72, 268, 82, 38, "OCT-"); button(170, 268, 82, 38, "OCT+");
+el("rect", { x: 292, y: 36, width: 252, height: 252, rx: 26, fill: "#0d0e10" });
+el("rect", { x: 568, y: 160, width: 400, height: 140, rx: 18, fill: TRAY });
+const ROW1 = [["FX", "FX"], ["SEL", "FILT"], ["ENV", "AMP"], ["LFO", "LFO"], ["EDIT", "SYN"], ["GLO", "GLOBAL"]];
+const ROW2 = [["HOME", "PATTERN"], ["SAVE", ""], ["ARP", "TRK"], ["SEQ", "GRID"], ["PLAY", ""], ["REC", ""]];
+for (let i = 0; i < 6; i++) {
+  button(582 + i * 63, 174, 54, 48, ROW1[i][0], ROW1[i][1]);
+  button(582 + i * 63, 236, 54, 48, ROW2[i][0], ROW2[i][1]);
+}
+
+const keys = [];
+(function keybed(x0, y0, w, h) {
+  el("rect", { x: x0, y: y0, width: w, height: h, rx: 18, fill: TRAY });
+  const pitch = (w - 24) / 16, kw = pitch * 0.78;
+  for (let i = 0; i < 16; i++) {
+    const g = el("g", {});
+    const x = x0 + 12 + i * pitch + (pitch - kw) / 2;
+    el("rect", { x, y: y0 + h * 0.43, width: kw, height: h * 0.52, rx: kw / 2, fill: KEY_W, class: "keyface white" }, g);
+    text(g, x + kw / 2, y0 + h * 0.43 + h * 0.52 - 14, String(i + 1), 14, "#4b5258");
+    keys[WHITE_K[i]] = { g, label: `step ${i + 1}` };
+  }
+  BLACK_AFTER.forEach((a, k) => {
+    const g = el("g", {});
+    const x = x0 + 12 + (a + 1) * pitch - kw / 2;
+    el("rect", { x, y: y0 + h * 0.06, width: kw, height: h * 0.33, rx: kw / 2, fill: KEY_B, class: "keyface black" }, g);
+    text(g, x + kw / 2, y0 + h * 0.06 + h * 0.33 - 12, BLACK_NAME[k], 12, "#30363b");
+    keys[BLACK_K[k]] = { g, label: `tasto nero ${BLACK_NAME[k]}` };
+  });
+})(36, 340, 928, 270);
+
+// ---------------------------------------------------------------- touch targets over the drawing
+const device = document.getElementById("device");
+function hit(c, cls, label) {
+  const b = c.g.getBBox(), d = document.createElement("div");
+  d.className = "hit" + (cls ? " " + cls : "");
+  Object.assign(d.style, { left: `${b.x / 10}%`, top: `${b.y / 6.4}%`, width: `${b.width / 10}%`, height: `${b.height / 6.4}%` });
+  d.setAttribute("aria-label", label);
+  d.setAttribute("role", cls === "knob" ? "slider" : "button");
+  d.tabIndex = 0;
+  d.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+  d.addEventListener("contextmenu", (e) => e.preventDefault());
+  device.insertBefore(d, document.getElementById("start"));
+  c.hit = d;
+}
+for (const k of Object.values(knobs)) hit(k, "knob", k.label);
+for (const b of Object.values(buttons)) hit(b, "", b.label);
+keys.forEach((k) => hit(k, "", k.label));
+
+// ---------------------------------------------------------------- the emulator
+let ex = null, mem = null, ac = null, master = 2800;
+let btnMask = 0, keyMask = 0, latchedBtn = 0, latchedKey = 0;
+const btnHeld = new Map(), keyHeld = new Map();          // pointer / key id -> bit
+const midiQueue = [];
+
+function syncButtons() {
+  let m = latchedBtn;
+  for (const b of btnHeld.values()) m |= 1 << b;
+  btnMask = m;
+  if (ex) ex.web_buttons(m >>> 0);
+  for (const b of Object.values(buttons)) {
+    b.g.classList.toggle("held", !!(m & (1 << b.bit)));
+    b.g.classList.toggle("latched", !!(latchedBtn & (1 << b.bit)));
+    b.hit.setAttribute("aria-pressed", m & (1 << b.bit) ? "true" : "false");
+  }
+}
+function syncKeys() {
+  let m = latchedKey;
+  for (const k of keyHeld.values()) m |= 1 << k;
+  keyMask = m;
+  if (ex) ex.web_keys(m >>> 0);
+  keys.forEach((k, i) => {
+    k.g.classList.toggle("held", !!(m & (1 << i)));
+    k.g.classList.toggle("latched", !!(latchedKey & (1 << i)));
+  });
+}
+
+for (const b of Object.values(buttons)) {
+  b.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (e.shiftKey || e.button === 2) { latchedBtn ^= 1 << b.bit; syncButtons(); return; }
+    if (latchedBtn & (1 << b.bit)) { latchedBtn &= ~(1 << b.bit); syncButtons(); return; }
+    b.hit.setPointerCapture(e.pointerId);
+    btnHeld.set("p" + e.pointerId, b.bit);
+    syncButtons();
+  });
+  b.hit.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.repeat) { btnHeld.set("f" + b.bit, b.bit); syncButtons(); e.preventDefault(); e.stopPropagation(); }
+  });
+  b.hit.addEventListener("keyup", (e) => { if (btnHeld.delete("f" + b.bit)) syncButtons(); e.stopPropagation(); });
+}
+keys.forEach((k, i) => {
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (e.shiftKey || e.button === 2) { latchedKey ^= 1 << i; syncKeys(); return; }
+    if (latchedKey & (1 << i)) { latchedKey &= ~(1 << i); syncKeys(); return; }
+    k.hit.setPointerCapture(e.pointerId);
+    keyHeld.set("p" + e.pointerId, i);
+    syncKeys();
+  });
+});
+function pointerUp(e) {
+  const id = "p" + e.pointerId;
+  if (btnHeld.delete(id)) syncButtons();
+  if (keyHeld.delete(id)) syncKeys();
+}
+device.addEventListener("pointerup", pointerUp);
+device.addEventListener("pointercancel", pointerUp);
+device.addEventListener("lostpointercapture", pointerUp);
+
+function drawKnob(k) { k.ind.setAttribute("transform", `rotate(${k.angle} ${k.x} ${k.y})`); }
+function turn(k, n) {
+  if (!n) return;
+  if (k.role === "master") {
+    master = Math.max(0, Math.min(4096, master + n * 64));
+    k.angle = -135 + 270 * master / 4096;
+    if (ex) ex.web_master(master);
+  } else {
+    k.angle = (k.angle + n * 18) % 360;
+    if (ex) ex.web_enc(k.role, n);
+  }
+  drawKnob(k);
+}
+for (const k of Object.values(knobs)) {
+  if (k.role === "master") { k.angle = -135 + 270 * master / 4096; drawKnob(k); }
+  let drag = null, wheel = 0;
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    k.hit.setPointerCapture(e.pointerId);
+    drag = { y: e.clientY, acc: 0 };
+  });
+  k.hit.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    drag.acc += drag.y - e.clientY;
+    drag.y = e.clientY;
+    const step = k.role === "master" ? 3 : 7, n = Math.trunc(drag.acc / step);
+    if (n) { drag.acc -= n * step; turn(k, n); }
+  });
+  const end = () => { drag = null; };
+  k.hit.addEventListener("pointerup", end);
+  k.hit.addEventListener("pointercancel", end);
+  k.hit.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    if (Math.abs(dy) >= 50) { turn(k, dy < 0 ? 1 : -1); wheel = 0; return; }   // a mouse wheel notch: one detent
+    wheel -= dy;                                                                   // a trackpad: by distance
+    const n = Math.trunc(wheel / 25);
+    if (n) { wheel -= n * 25; turn(k, n); }
+  }, { passive: false });
+  k.hit.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { turn(k, 1); e.preventDefault(); e.stopPropagation(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowLeft") { turn(k, -1); e.preventDefault(); e.stopPropagation(); }
+  });
+}
+
+// the computer keyboard
+const KEYMAP = {};
+"QWERTYUI".split("").forEach((c, i) => KEYMAP["Key" + c] = { key: WHITE_K[i] });
+"ASDFGHJK".split("").forEach((c, i) => KEYMAP["Key" + c] = { key: WHITE_K[8 + i] });
+"1234567890".split("").forEach((c, i) => KEYMAP["Digit" + c] = { key: BLACK_K[i] });
+KEYMAP.Minus = { key: BLACK_K[10] };
+Object.assign(KEYMAP, { Space: { btn: BTN.PLAY }, Enter: { btn: BTN.REC }, Escape: { btn: BTN.SEQ },
+                        KeyZ: { btn: BTN["OCT-"] }, KeyX: { btn: BTN["OCT+"] } });
+addEventListener("keydown", (e) => {
+  if (!ex || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === "ArrowUp" || e.code === "ArrowDown") { turn(knobs.SELECT, e.code === "ArrowUp" ? 1 : -1); e.preventDefault(); return; }
+  const m = KEYMAP[e.code];
+  if (!m) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (m.key !== undefined) { keyHeld.set("k" + e.code, m.key); syncKeys(); }
+  else { btnHeld.set("k" + e.code, m.btn); syncButtons(); }
+});
+addEventListener("keyup", (e) => {
+  const id = "k" + e.code;
+  if (keyHeld.delete(id)) syncKeys();
+  if (btnHeld.delete(id)) syncButtons();
+});
+addEventListener("blur", () => {
+  for (const id of [...btnHeld.keys()]) if (id[0] !== "p") btnHeld.delete(id);
+  for (const id of [...keyHeld.keys()]) if (id[0] !== "p") keyHeld.delete(id);
+  syncButtons(); syncKeys();
+});
+
+// ---------------------------------------------------------------- screen and lights
+const ctx = document.getElementById("screen").getContext("2d");
+const img = ctx.createImageData(240, 240);
+let lastBlits = -1, lastLights = "";
+function drawScreen() {
+  const fb = new Uint16Array(mem.buffer, ex.web_fb(), 240 * 240), d = img.data;
+  for (let i = 0; i < 240 * 240; i++) {
+    const v = fb[i], p = ((v >> 8) | (v << 8)) & 0xFFFF;
+    d[i * 4] = ((p >> 11) & 31) * 255 / 31;
+    d[i * 4 + 1] = ((p >> 5) & 63) * 255 / 63;
+    d[i * 4 + 2] = (p & 31) * 255 / 31;
+    d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+function drawLights() {
+  const b = ex.web_lit_buttons() >>> 0, k = ex.web_lit_keys() >>> 0, dm = ex.web_dim_keys() >>> 0, sig = `${b},${k},${dm}`;
+  if (sig === lastLights) return;
+  lastLights = sig;
+  for (const x of Object.values(buttons)) x.g.classList.toggle("lit", !!(b & (1 << x.bit)));
+  keys.forEach((x, i) => {
+    x.g.classList.toggle("lit", !!(k & (1 << i)));
+    x.g.classList.toggle("dim", !(k & (1 << i)) && !!(dm & (1 << i)));
+  });
+}
+
+// ---------------------------------------------------------------- storage (this browser only)
+function loadStore() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}"), out = {};
+    for (const [o, b64] of Object.entries(raw)) out[o] = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return out;
+  } catch { return {}; }
+}
+let lastWrites = 0;
+function saveStore() {
+  const w = ex.web_store_writes();
+  if (w === lastWrites) return;
+  lastWrites = w;
+  try {
+    const raw = {};
+    for (let o = 0; o < ex.web_nobj(); o++) {
+      const n = ex.web_store_len(o);
+      if (n <= 0) continue;
+      const u8 = new Uint8Array(mem.buffer, ex.web_store(o), n);
+      let s = "";
+      for (let i = 0; i < u8.length; i += 4096) s += String.fromCharCode.apply(null, u8.subarray(i, i + 4096));
+      raw[o] = btoa(s);
+    }
+    localStorage.setItem(STORE_KEY, JSON.stringify(raw));
+  } catch { /* no storage: this session only */ }
+}
+
+// ---------------------------------------------------------------- audio: the device's clock
+let busy = 0, frames = 0;
+function render(e) {
+  const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1), n = L.length;
+  const t0 = performance.now();
+  for (const m of midiQueue.splice(0)) ex.web_midi(m[0], m[1] | 0, m[2] | 0);
+  for (let off = 0; off < n; off += 1024) {
+    const k = Math.min(1024, n - off);
+    ex.web_render(k);
+    L.set(new Float32Array(mem.buffer, ex.web_out_l(), k), off);
+    R.set(new Float32Array(mem.buffer, ex.web_out_r(), k), off);
+  }
+  busy += performance.now() - t0;
+  frames += n;
+}
+
+function frame() {
+  if (!ex) return;
+  if (ex.web_blits() !== lastBlits) { lastBlits = ex.web_blits(); drawScreen(); }
+  drawLights();
+  saveStore();
+  if (midiOut) { let p; while ((p = ex.web_midi_out() >>> 0)) { const st = (p >>> 8) & 255; midiOut.send(st >= 0xF8 ? [st] : [st, (p >>> 16) & 127, (p >>> 24) & 127]); } }
+  else while (ex.web_midi_out()) { /* drain */ }
+  if (frames >= 44100) {
+    const pct = Math.round(100 * busy / (frames / 44.1));
+    ex.web_set_cpu(pct);
+    document.getElementById("load").textContent = `Carico sul tuo computer: ${pct} %`;
+    busy = frames = 0;
+  }
+  const st = ex.web_playing() ? `In esecuzione, step <b>${ex.web_step() + 1}</b>` : "Fermo";
+  const s = document.getElementById("status");
+  if (s.dataset.v !== st) { s.dataset.v = st; s.innerHTML = st; }
+  requestAnimationFrame(frame);
+}
+
+async function start() {
+  const go = document.getElementById("go");
+  go.disabled = true;
+  go.textContent = "Avvio…";
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100, latencyHint: "interactive" });
+    const bytes = Uint8Array.from(atob(WASM_B64), (c) => c.charCodeAt(0));
+    const { instance } = await WebAssembly.instantiate(bytes, {});
+    ex = instance.exports;
+    mem = ex.memory;
+    ex.web_init();
+    for (const [o, u8] of Object.entries(loadStore())) {
+      const b = u8.subarray(0, ex.web_store_max());
+      new Uint8Array(mem.buffer, ex.web_store(+o), b.length).set(b);
+      ex.web_store_set_len(+o, b.length);
+    }
+    lastWrites = ex.web_store_writes();
+    ex.web_master(master);
+    ex.web_boot();
+    syncButtons(); syncKeys();
+    const sp = ac.createScriptProcessor(1024, 0, 2);
+    sp.onaudioprocess = render;
+    sp.connect(ac.destination);
+    await ac.resume();
+    document.getElementById("start").hidden = true;
+    requestAnimationFrame(frame);
+  } catch (err) {
+    go.disabled = false;
+    go.textContent = "Riprova";
+    document.getElementById("status").textContent = `Non si è avviato: ${err.message}`;
+  }
+}
+document.getElementById("go").addEventListener("click", start);
+
+// ---------------------------------------------------------------- MIDI (where the browser allows it)
+let midiOut = null;
+document.getElementById("midi").addEventListener("click", async () => {
+  const stat = document.getElementById("midistat");
+  try {
+    if (!navigator.requestMIDIAccess) throw new Error("questo browser non ha Web MIDI");
+    const access = await navigator.requestMIDIAccess();
+    const hook = () => {
+      const ins = [...access.inputs.values()];
+      for (const i of ins) i.onmidimessage = (e) => { const d = e.data; if (d[0] !== 0xFE) midiQueue.push([d[0], d[1], d[2]]); };
+      midiOut = [...access.outputs.values()][0] || null;
+      stat.textContent = ins.length ? `MIDI in: ${ins.map((i) => i.name).join(", ")}` : "Nessun ingresso MIDI collegato";
+    };
+    access.onstatechange = hook;
+    hook();
+  } catch (err) {
+    stat.textContent = `MIDI non disponibile qui (${err.message || "rifiutato"}). Apri MNM-1.html in Chrome o Edge.`;
+  }
+});
+
+// ---------------------------------------------------------------- factory reset
+const ask = document.getElementById("resetask");
+document.getElementById("reset").addEventListener("click", () => { ask.hidden = false; });
+document.getElementById("resetno").addEventListener("click", () => { ask.hidden = true; });
+document.getElementById("resetyes").addEventListener("click", () => {
+  try { localStorage.removeItem(STORE_KEY); } catch { /* nothing stored */ }
+  ask.hidden = true;
+  if (ex) {
+    for (let o = 0; o < ex.web_nobj(); o++) ex.web_store_set_len(o, -1);
+    lastWrites = ex.web_store_writes();
+    ex.web_boot();
+    lastBlits = -1;
+  }
+  document.getElementById("status").textContent = "Cancellato: di nuovo la demo in A01.";
+});
+</script>

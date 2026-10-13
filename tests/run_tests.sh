@@ -48,6 +48,12 @@ else
     echo "  skip update-path tests (no build/mnm.fwsc: run ./build.sh)"
 fi
 run host-build sh host/build_host.sh
+# the browser emulator (clang with the wasm32 target, or emcc) and its WebAssembly in Node
+if command -v node >/dev/null 2>&1 && { command -v emcc >/dev/null 2>&1 || clang --print-targets 2>/dev/null | grep -q wasm32; }; then
+    run emulator sh -c "sh web/emu/build.sh && node tests/web/emu_test.mjs build/emu/mnm.wasm"
+else
+    echo "  skip emulator (needs node, and clang with wasm32 or emcc)"
+fi
 for s in tests/scenarios/*.mnm; do
     n=$(basename "$s" .mnm)
     mkdir -p "build/scenarios/$n"

@@ -12,6 +12,7 @@ complete corresponding source under the same licence.
 | Platform: `firmware/hal/`, `firmware/loader/`, `firmware/src/{libc,lcd,gfx,usb,storage,ota,midi_uart}.c`, `firmware/crt0.S`, `firmware/app.ld`, `tools/` (build, package, install, rescue, font), `web/fm1*.js` | [Felucca](https://github.com/hugelton/Felucca), Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments, as changed for [X0X](https://github.com/charlesvestal/fm1-x0x), [FoMni](https://github.com/charlesvestal/fm1-fomni) and [FiMba-1](https://github.com/jadamsowers/fm1-fimba) (USB names and the flash object map changed here) | GPL-3.0-only |
 | `firmware/src/app/{panel,plat_fm1,main_fm1}.c`, `firmware/src/main.c`, `host/mnm_host.c`, the frame of `firmware/src/app/ui.c` (bands, knobs, autosave) and of `project.c` | adapted from FiMba-1 / FoMni (themselves from X0X and Felucca) | GPL-3.0-only |
 | `firmware/src/dsp/fastmath.h` | FoMni / X0X | GPL-3.0-only |
+| The browser emulator (`web/emu/`): the page's drawing of the FM-1 and its input handling | adapted from FiMba-1's emulator (itself from FoMni's and X0X's) | GPL-3.0-only |
 | Platform tests (`tests/host/{fastmath,encoder,uac,trs}_test.c`, `tests/{storage,ota,ldr}_test.c`, `tests/install_test.py`) | FiMba-1 / FoMni / Felucca | GPL-3.0-only |
 | Everything else: the six-track engine, the machines, the sequencer, locks and arpeggiator (`firmware/src/dsp/mnm.{c,h}`), the UI's pages and grid, the storage of the pattern slots, `tests/host/mnm_test.c`, `tests/scenarios/` | MNM-1 | GPL-3.0-only |
 

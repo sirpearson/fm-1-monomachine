@@ -20,6 +20,10 @@ passi con **parameter lock**, trigless lock, slide, accent, swing, probabilità 
 
 ---
 
+**▶ Provalo nel browser:** `web/emu/build.sh` crea `build/emu/MNM-1.html`, un unico file da aprire in
+Chrome o Edge (anche da disco): è il firmware vero compilato in WebAssembly, con il pannello dell'FM-1
+suonabile con mouse, tastiera del computer e tastiera MIDI. Vedi [L'emulatore](#lemulatore).
+
 ## Indice
 
 - [Il concetto](#il-concetto)
@@ -218,6 +222,25 @@ python3 tools/fm1_install.py build/mnm.fwsc     # installa
 Il simulatore host (`build/host/mnm_host SCRIPT OUTDIR`) esegue l'intero firmware (UI, sequencer,
 motore) su un computer, guidato da script in `tests/scenarios/*.mnm`, e produce screenshot PNG,
 audio WAV, LED e log MIDI. I WAV di ogni macchina e della demo finiscono in `build/host/wav/`.
+
+## L'emulatore
+
+```
+web/emu/build.sh          # -> build/emu/MNM-1.html (e mnm.wasm)
+```
+
+Serve clang con il target wasm32 (non serve una libreria C: usa la `libc.c` del firmware) oppure
+Emscripten. La pagina contiene il WebAssembly e si apre direttamente dal disco. L'audio fa avanzare
+l'orologio del dispositivo simulato un millisecondo alla volta, come sull'FM-1: il motore ogni 256
+campioni, l'interfaccia ogni 16 ms.
+
+- Manopole: trascina in verticale o usa la rotella. Pulsanti e tasti: clic; **Shift+clic** (o tasto
+  destro) li blocca premuti, utile per tenere uno step mentre giri una manopola.
+- Tastiera del computer: step 1–8 `Q`…`I`, 9–16 `A`…`K`, tasti neri `1`…`0` e `-`, `Spazio` PLAY,
+  `Invio` REC, `Esc` SEQ, `Z`/`X` OCT−/OCT+, frecce su/giù per la traccia. Per un parameter lock tieni
+  premuto il tasto di uno step e gira una manopola con la rotella.
+- MIDI in/out con Web MIDI (Chrome, Edge). I pattern salvati restano nel browser (localStorage).
+- Il carico CPU mostrato è quello del computer, non dell'FM-1.
 
 ## Installare in sicurezza
 
