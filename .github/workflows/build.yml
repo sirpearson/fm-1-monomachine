@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Test MNM-1 and build the firmware package: the full test suite (the engine, the platform, the whole
+# app in the simulator), the package built with the JieLi toolchain and checked against FoMni's (all
+# but the app byte-identical), both kept with the run as downloads.
+name: Test and build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    name: Tests and the firmware package
+    runs-on: ubuntu-latest
+    env:
+      AC79_SDK: ${{ github.workspace }}/../sdk
+      JIELI_TOOLCHAIN: ${{ github.workspace }}/../jieli/toolchain
+      # the FoMni commit the package is compared with (its update loader and boot head must match)
+      FOMNI_REF: 405ef41aef75f7e70afd6decc01505df07c708e9
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python packages
+        run: python3 -m pip install --quiet -r requirements.txt
+
+      - name: JieLi toolchain (JieLi's server, else the same package from a Docker image)
+        run: sh tools/get_toolchain.sh "$(dirname "$JIELI_TOOLCHAIN")"
+
+      - name: AC79 SDK files (three, SHA-256 checked)
+        run: sh tools/get_sdk.sh "$AC79_SDK"
+
+      - name: Build the firmware package
+        run: |
+          python3 tools/build.py
+          ls -l build/*.fwsc
+
+      - name: Build FoMni's package, to compare with
+        run: |
+          git clone --quiet https://github.com/charlesvestal/fm1-fomni build/fomni-ref
+          git -C build/fomni-ref checkout --quiet "$FOMNI_REF"
+          cp tools/gen_font.py build/fomni-ref/tools/
+          (cd build/fomni-ref && python3 tools/build.py)
+
+      - name: Tests (with the package check against FoMni's)
+        run: sh tests/run_tests.sh
+
+      - name: Keep the firmware with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnm-firmware
+          path: |
+            build/mnm.fwsc
+            build/mnm.bin
+
+      - name: Keep the scenario screenshots and audio
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenarios
+          path: |
+            build/scenarios/
+            build/host/wav/
+          if-no-files-found: ignore

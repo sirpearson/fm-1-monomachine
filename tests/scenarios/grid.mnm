@@ -1,0 +1,100 @@
+# GRID: steps on / off, locks by holding a step and turning, note and octave of a step, accent, slide
+wait 300
+# a new track to work on: track 6 (ENS), clear it (COPY held + PASTE)
+tapkey b5
+expect track 5
+key b9 down
+tapkey b10
+key b9 up
+expect trig5_0 0
+expect trig5_8 0
+# a step on, then off
+tapkey w3
+expect trig5_3 1
+expect note5_3 60
+tapkey w3
+expect trig5_3 0
+tapkey w3
+# hold step 4 and turn knob 1 on the AMP page: a lock on ATK
+tap ENV
+key w3 down
+spin K1 20
+key w3 up
+expect lock5_8_3 90
+expect trig5_3 1
+expect par5_8 70
+# the knob without a step held changes the kit
+spin K1 -10
+expect par5_8 60
+expect lock5_8_3 90
+shot lock.png
+# hold the step: the page shows its locks
+key w3 down
+wait 50
+shot lockview.png
+# its note up a fifth (PRESETS), an octave down (ALGORITHM)
+spin PRESET 7
+spin ALGO -1
+key w3 up
+expect note5_3 55
+expect trig5_3 1
+# two steps held: one turn locks both
+key w5 down
+key w6 down
+spin K2 -27
+key w5 up
+key w6 up
+expect lock5_9_5 100
+expect lock5_9_6 100
+# (no trig on them: trigless locks)
+expect trig5_5 0
+expect trig5_6 0
+# accent and slide (ACC / SLD held + a step)
+key b7 down
+tapkey w5
+key b7 up
+expect trig5_5 3
+key b8 down
+tapkey w6
+key b8 up
+expect trig5_6 5
+# a step off clears its locks
+tapkey w3
+expect trig5_3 0
+expect lock5_8_3 -1
+# mute: track 6 (MUTE held + track key), then the track selected (MUTE tapped)
+key b6 down
+tapkey b5
+key b6 up
+expect mute 32
+tapkey b6
+expect mute 0
+tapkey b0
+expect track 0
+tapkey b6
+expect mute 1
+tapkey b6
+expect mute 0
+# copy track 1, paste it on track 5
+tapkey b9
+tapkey b4
+tapkey b10
+expect trig4_0 1
+expect trig4_4 1
+expect machine4 4
+# PASTE held: the sound too
+key b10 down
+wait 900
+key b10 up
+expect machine4 7
+expect par4_1 0
+# the machine with ALGORITHM (SYN page)
+tap EDIT
+expect view 0
+turn ALGO 1
+expect machine4 8
+turn ALGO -2
+expect machine4 6
+shot machine.png
+expect dirty 1
+expect dropped 0

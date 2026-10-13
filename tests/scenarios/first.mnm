@@ -1,0 +1,39 @@
+# First boot: the demo in slot A01, the pages, playing it
+wait 300
+expect slot 0
+expect view 0
+expect playing 0
+shot boot.png
+expect trig0_0 1
+expect machine0 7
+tap PLAY
+wav demo.wav
+wait 1200
+expect playing 1
+shot playing.png
+tap ENV
+expect view 1
+shot amp.png
+tap ENV
+expect row 1
+tap SEL
+shot filt.png
+tap FX
+tap LFO
+expect view 4
+shot lfo.png
+tap ARP
+shot trk.png
+tap HOME
+expect view 8
+shot home.png
+tap GLO
+shot glo.png
+wait 2000
+wavstop
+expect peak_db_max -0.1
+expect peak_db_min -12
+tap PLAY
+wait 100
+expect playing 0
+expect dropped 0

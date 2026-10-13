@@ -1,0 +1,62 @@
+# MIDI in: notes on the auto channel play the track selected, on the tracks' channels their tracks;
+# CC 16.. set values; program change picks a pattern; clock leads the sequencer
+wait 300
+tapkey b3
+midi 90 3C 64
+wait 100
+expect notes3 1
+midi 80 3C 00
+# channel 3 (base 2 = channel 2 is track 1): track 2
+midi 92 3C 64
+wait 50
+expect notes1 1
+midi 82 3C 00
+# CC 16 + 13 (VOL) on track 4's channel (5)
+midi B4 1D 40
+wait 20
+expect par3_13 64
+# CC 7: volume; CC 64 (a sustain pedal) changes nothing
+midi B4 07 7F
+midi B4 40 7F
+wait 20
+expect par3_13 127
+expect par3_48 0
+# program change on the auto channel: A03
+midi C0 02 00
+wait 50
+expect slot 2
+midi C0 00 00
+wait 50
+expect slot 0
+# clock: start, 24 ticks (4 steps), stop
+midi FA 00 00
+wait 5
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+expect ext 1
+expect playing 1
+expect step 1
+midi FC 00 00
+wait 20
+expect playing 0
+# MIDI out: on, the sequencer's notes go out
+tap GLO
+tap GLO
+spin K1 1
+tap PLAY
+wait 600
+tap PLAY
+expect midi_out >4
+expect dropped 0
